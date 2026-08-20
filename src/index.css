@@ -1,0 +1,342 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Nunito:wght@400;500;600;700;800&display=swap');
+
+@import 'tailwindcss';
+
+@theme {
+
+  /* ═══════════════════════════════════════════════════════════════
+     FONTS
+     --font-sans  → body copy (Nunito)
+     --font-display → headings, numbers, UI labels (Outfit)
+  ═══════════════════════════════════════════════════════════════ */
+  --font-sans:    'Nunito', sans-serif;
+  --font-display: 'Outfit', sans-serif;
+
+
+  /* ═══════════════════════════════════════════════════════════════
+     TYPOGRAPHY SCALE
+     Usage (inline):  fontSize: "var(--text-headline)"
+     Usage (Tailwind): text-headline, text-subhead, etc.
+  ═══════════════════════════════════════════════════════════════ */
+  --text-display:  2rem;        /* 32px  — hero banners, splash screens       */
+  --text-headline: 1.5rem;      /* 24px  — page titles, portal headers         */
+  --text-title:    1.2rem;      /* 19px  — section titles, card headers        */
+  --text-subhead:  1rem;        /* 16px  — sub-section labels, modal titles    */
+  --text-body:     0.875rem;    /* 14px  — general body copy                   */
+  --text-caption:  0.75rem;     /* 12px  — secondary labels, timestamps        */
+  --text-label:    0.6875rem;   /* 11px  — badges, chips, table headers        */
+  --text-micro:    0.625rem;    /* 10px  — legal text, fine print              */
+
+
+  /* ═══════════════════════════════════════════════════════════════
+     FONT WEIGHTS
+     Usage (inline):  fontWeight: "var(--weight-bold)"
+  ═══════════════════════════════════════════════════════════════ */
+  --weight-regular:   400;
+  --weight-medium:    500;
+  --weight-semibold:  600;
+  --weight-bold:      700;
+  --weight-extrabold: 800;
+
+
+  /* ═══════════════════════════════════════════════════════════════
+     LINE HEIGHTS
+     Usage (Tailwind): leading-tight, leading-snug, etc.
+  ═══════════════════════════════════════════════════════════════ */
+  --leading-tight:   1;
+  --leading-snug:    1.2;
+  --leading-normal:  1.5;
+  --leading-relaxed: 1.65;
+
+
+  /* ═══════════════════════════════════════════════════════════════
+     LETTER SPACING
+     Usage (Tailwind): tracking-tight, tracking-wide, etc.
+  ═══════════════════════════════════════════════════════════════ */
+  --tracking-tight:  -0.02em;
+  --tracking-normal:  0em;
+  --tracking-wide:    0.04em;
+  --tracking-caps:    0.08em;   /* ALL CAPS section labels */
+
+
+  /* ═══════════════════════════════════════════════════════════════
+     COLOUR — BRAND PRIMITIVES
+     Single source of truth for raw colour values.
+     Change these to re-skin the entire product.
+  ═══════════════════════════════════════════════════════════════ */
+  /* Primary — warm amber-orange */
+  --color-primary:            #F97316;
+  --color-primary-hover:      #EA6C0A;
+  --color-primary-light:      #FFF7ED;
+  --color-primary-foreground: #FFFFFF;
+
+  /* Neutral surface scale */
+  --color-background:         #FAFAF7;   /* page canvas              */
+  --color-surface:            #FFFFFF;   /* cards, sheets            */
+  --color-surface-raised:     #F5F0EA;   /* elevated surface / muted */
+  --color-surface-overlay:    #EDE8E1;   /* overlay backgrounds      */
+
+  /* Text hierarchy */
+  --color-foreground:         #1C1917;   /* primary text             */
+  --color-foreground-secondary: #57534E; /* secondary text           */
+  --color-foreground-muted:   #78716C;   /* muted / placeholder      */
+  --color-foreground-disabled:#A8A29E;   /* disabled state           */
+
+  /* Legacy aliases (keep so existing Tailwind classes still resolve) */
+  --color-card:               #FFFFFF;
+  --color-card-foreground:    #1C1917;
+  --color-muted:              #F5F0EA;
+  --color-muted-foreground:   #78716C;
+  --color-border:             #E8DDD5;
+  --color-accent:             #F97316;
+  --color-accent-foreground:  #FFFFFF;
+
+
+  /* ═══════════════════════════════════════════════════════════════
+     COLOUR — SEMANTIC STATUS
+  ═══════════════════════════════════════════════════════════════ */
+  --color-status-red:         #EF4444;
+  --color-status-red-light:   #FEF2F2;
+  --color-status-yellow:      #F59E0B;
+  --color-status-yellow-light:#FFFBEB;
+  --color-status-green:       #22C55E;
+  --color-status-green-light: #F0FDF4;
+  --color-confirm-green:      #16A34A;
+  --color-confirm-green-light:#DCFCE7;
+  --color-info:               #3B82F6;
+  --color-info-light:         #EFF6FF;
+
+
+  /* ═══════════════════════════════════════════════════════════════
+     COLOUR — PORTAL ACCENTS
+     Each portal has a primary + muted pair.
+     Swap the hex to re-brand an entire portal.
+  ═══════════════════════════════════════════════════════════════ */
+  --color-guest:              #F97316;   /* Guest PWA — amber         */
+  --color-guest-muted:        #FFF7ED;
+  --color-server:             #6366F1;   /* Server UI — indigo        */
+  --color-server-muted:       #EEF2FF;
+  --color-kitchen:            #16A34A;   /* KDS Kitchen — green       */
+  --color-kitchen-muted:      #DCFCE7;
+  --color-bar:                #0891B2;   /* KDS Bar — cyan            */
+  --color-bar-muted:          #E0F2FE;
+  --color-cashier:            #7C3AED;   /* Cashier / POS — violet    */
+  --color-cashier-muted:      #F5F3FF;
+  --color-admin:              #1E40AF;   /* Admin Portal — blue       */
+  --color-admin-muted:        #EFF6FF;
+
+
+  /* ═══════════════════════════════════════════════════════════════
+     BORDER RADIUS
+     Usage (Tailwind): rounded-sm, rounded-md, rounded-lg, rounded-xl …
+     Usage (inline):   borderRadius: "var(--radius-lg)"
+  ═══════════════════════════════════════════════════════════════ */
+  --radius-xs:   4px;
+  --radius-sm:   6px;
+  --radius-md:   10px;
+  --radius-lg:   14px;   /* default card radius */
+  --radius-xl:   18px;
+  --radius-2xl:  24px;
+  --radius-full: 9999px;
+
+  /* Legacy single token (keep for backward compat) */
+  --radius: 14px;
+
+
+  /* ═══════════════════════════════════════════════════════════════
+     SHADOWS
+     Usage (inline): boxShadow: "var(--shadow-card)"
+  ═══════════════════════════════════════════════════════════════ */
+  --shadow-xs:    0 1px 2px rgba(0,0,0,0.05);
+  --shadow-card:  0 1px 4px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04);
+  --shadow-float: 0 4px 20px rgba(0,0,0,0.12), 0 1px 6px rgba(0,0,0,0.06);
+  --shadow-modal: 0 8px 40px rgba(0,0,0,0.18), 0 2px 10px rgba(0,0,0,0.08);
+  --shadow-phone: 0 24px 60px rgba(0,0,0,0.22), 0 4px 16px rgba(0,0,0,0.1);
+  --shadow-inset: inset 0 1px 3px rgba(0,0,0,0.06);
+
+
+  /* ═══════════════════════════════════════════════════════════════
+     SPACING SCALE (custom semantic names, beyond Tailwind defaults)
+     Usage (inline): padding: "var(--space-page)"
+  ═══════════════════════════════════════════════════════════════ */
+  --space-page:      16px;   /* horizontal page padding on mobile  */
+  --space-page-lg:   32px;   /* horizontal page padding on desktop */
+  --space-section:   24px;   /* vertical gap between page sections */
+  --space-card:      16px;   /* internal card padding              */
+  --space-card-lg:   20px;   /* internal card padding (larger)     */
+  --space-gap:       12px;   /* standard component gap             */
+  --space-gap-sm:    8px;    /* tight component gap                */
+
+
+  /* ═══════════════════════════════════════════════════════════════
+     ANIMATION DURATIONS
+     Usage: transition: "all var(--duration-normal) ease"
+  ═══════════════════════════════════════════════════════════════ */
+  --duration-fast:   150ms;
+  --duration-normal: 250ms;
+  --duration-slow:   400ms;
+  --duration-slower: 600ms;
+
+
+  /* ═══════════════════════════════════════════════════════════════
+     Z-INDEX SCALE
+     Usage (inline): zIndex: "var(--z-modal)"
+     (These are raw values, not CSS layers)
+  ═══════════════════════════════════════════════════════════════ */
+  --z-base:     0;
+  --z-raised:   10;
+  --z-sticky:   40;
+  --z-dropdown: 50;
+  --z-modal:    100;
+  --z-toast:    200;
+
+}
+
+
+/* ───────────────────────────────────────────────────────────────
+   BASE ELEMENT STYLES — wired to tokens
+─────────────────────────────────────────────────────────────── */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: var(--leading-normal);
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, h6, .font-display {
+  font-family: var(--font-display);
+  line-height: var(--leading-snug);
+}
+
+h1 { font-size: var(--text-headline); font-weight: var(--weight-extrabold); }
+h2 { font-size: var(--text-title);    font-weight: var(--weight-bold); }
+h3 { font-size: var(--text-subhead);  font-weight: var(--weight-bold); }
+
+/* Convenience semantic classes ─ use these in JSX */
+.text-display  { font-family: var(--font-display); font-size: var(--text-display);  font-weight: var(--weight-extrabold); line-height: var(--leading-tight); }
+.text-headline { font-family: var(--font-display); font-size: var(--text-headline); font-weight: var(--weight-extrabold); line-height: var(--leading-snug); }
+.text-title    { font-family: var(--font-display); font-size: var(--text-title);    font-weight: var(--weight-bold);      line-height: var(--leading-snug); }
+.text-subhead  { font-family: var(--font-display); font-size: var(--text-subhead);  font-weight: var(--weight-semibold);  line-height: var(--leading-snug); }
+.text-body     { font-family: var(--font-sans);    font-size: var(--text-body);     font-weight: var(--weight-regular);   line-height: var(--leading-normal); }
+.text-caption  { font-family: var(--font-sans);    font-size: var(--text-caption);  font-weight: var(--weight-medium);    line-height: var(--leading-normal); }
+.text-label    { font-family: var(--font-sans);    font-size: var(--text-label);    font-weight: var(--weight-bold);      line-height: var(--leading-snug); letter-spacing: var(--tracking-caps); text-transform: uppercase; }
+.text-micro    { font-family: var(--font-sans);    font-size: var(--text-micro);    font-weight: var(--weight-medium);    line-height: var(--leading-normal); }
+
+/* Number / price display — uses display font for tabular figures */
+.text-numeral  { font-family: var(--font-display); font-weight: var(--weight-extrabold); letter-spacing: var(--tracking-tight); }
+
+
+/* ───────────────────────────────────────────────────────────────
+   SCROLLBAR
+─────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar       { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 2px; }
+
+
+/* ───────────────────────────────────────────────────────────────
+   TRANSITIONS  (bottom-sheet, screen fades)
+─────────────────────────────────────────────────────────────── */
+.slide-up-enter {
+  transform: translateY(100%);
+  opacity: 0;
+}
+.slide-up-active {
+  transform: translateY(0);
+  opacity: 1;
+  transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1), opacity var(--duration-normal) ease;
+}
+
+.screen-fade {
+  animation: screenFadeIn var(--duration-normal) ease forwards;
+}
+@keyframes screenFadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+
+/* ───────────────────────────────────────────────────────────────
+   ANIMATIONS
+─────────────────────────────────────────────────────────────── */
+@keyframes checkDraw {
+  from { stroke-dashoffset: 100; }
+  to   { stroke-dashoffset: 0; }
+}
+.check-path {
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  animation: checkDraw var(--duration-slower) ease 0.3s forwards;
+}
+
+@keyframes circlePop {
+  0%   { transform: scale(0.4); opacity: 0; }
+  70%  { transform: scale(1.08); }
+  100% { transform: scale(1); opacity: 1; }
+}
+.check-circle {
+  animation: circlePop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+@keyframes badgePop {
+  0%   { transform: scale(0); }
+  60%  { transform: scale(1.3); }
+  100% { transform: scale(1); }
+}
+.badge-pop {
+  animation: badgePop 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+.shimmer {
+  background: linear-gradient(90deg, var(--color-surface-overlay) 25%, var(--color-surface-raised) 50%, var(--color-surface-overlay) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.spinner {
+  animation: spin 0.8s linear infinite;
+}
+
+
+/* ───────────────────────────────────────────────────────────────
+   STAR RATING
+─────────────────────────────────────────────────────────────── */
+.star-btn:hover ~ .star-btn,
+.star-btn:hover {
+  color: var(--color-status-yellow);
+}
+
+
+/* ───────────────────────────────────────────────────────────────
+   SAFE AREA (iOS notch / home indicator)
+─────────────────────────────────────────────────────────────── */
+.safe-bottom { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+.safe-top    { padding-top:    calc(20px + env(safe-area-inset-top)); }
+
+/* Utility to hide scrollbars while keeping functionality */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

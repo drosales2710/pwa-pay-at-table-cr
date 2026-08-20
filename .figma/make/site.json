@@ -1,0 +1,10 @@
+{
+  "description": "Enables restaurant customers to scan a table QR code, browse digital menus, order progressively, split bills, and pay via biometric methods—all without app downloads or registration.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
