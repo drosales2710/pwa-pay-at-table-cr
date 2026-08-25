@@ -5,6 +5,7 @@ import SplitCheckScreen from "../../components/SplitCheckScreen"
 import TipScreen from "../../components/TipScreen"
 import CheckoutModal from "../../components/CheckoutModal"
 import type { SplitMethod } from "../../types"
+import type { ItemUnitSelection } from "../../utils/billing"
 import { calculateTaxBreakdown } from "../../utils/tax"
 import { getOpenBillItems } from "../../utils/billing"
 
@@ -40,14 +41,25 @@ export default function GuestCheckoutPage() {
     navigate(`/menu?table=${tableId}`)
   }, [releaseCheckoutLock, navigate, tableId])
 
-  const handleSplitContinue = (method: SplitMethod, amount: number, partySize: number) => {
-    let resolved = amount
+  const handleSplitContinue = (
+    method: SplitMethod,
+    amount: number,
+    partySize: number,
+    unitSelections?: ItemUnitSelection[]
+  ) => {
+    const remaining = g.tableBalance.remaining
+    let resolved: number
+
     if (method === "equal") {
       resolved = g.lockSplitForCheckout(method, partySize)
+    } else if (method === "myItems") {
+      resolved = g.lockSplitForCheckout(method, partySize, unitSelections)
     } else {
       g.lockSplitForCheckout(method, partySize)
-      resolved = Math.min(amount, g.tableBalance.remaining)
+      resolved = Math.min(amount, remaining)
     }
+
+    resolved = Math.min(Math.max(0, resolved), remaining)
     setSplitMethod(method)
     setPayAmount(resolved)
     setStep("tip")

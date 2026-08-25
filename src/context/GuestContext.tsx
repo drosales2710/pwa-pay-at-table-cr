@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useMemo, useCallback } 
 import { Outlet, useParams, useSearchParams } from "react-router-dom"
 import type {
   CartItem,
+  CompRecord,
   MenuItem,
   Restaurant,
   TableGuest,
@@ -15,12 +16,12 @@ import { FLOOR_TABLES, type TableRecord, type GuardianOrder, type KDSTicket, typ
 import { MENU_ITEMS } from "../data/menuData"
 import { getOrCreateGuestId, getGuestName, setGuestName as persistGuestName } from "../utils/guestSession"
 import { shouldQueueForGuardian, evaluateOrderForGuardian } from "../utils/guardian"
-import { createKdsTicketsFromCart } from "../utils/kds"
-import { ORDER_UNDO_WINDOW_MS } from "../utils/order"
+import { createKdsTicketsFromCart, isItemKitchenStarted, pullCartItemFromTickets } from "../utils/kds"
+import { ORDER_UNDO_WINDOW_MS, getItemOrderId, type GuestCancelReason, type StaffBillReason } from "../utils/order"
+import { isReceiptCyclePaid, staffGuestId } from "../utils/billEdit"
 import {
   sumItems,
   getGuestEqualShare,
-  sumGuestItems,
   createSplitSnapshot,
   type SplitSnapshot,
 } from "../utils/split"
@@ -28,6 +29,9 @@ import {
   getOldestUnpaidReceiptCycle,
   nextReceiptCycleAfterPayment,
   getOpenBillItems,
+  buildItemSettlementMap,
+  sumDueForUnitSelections,
+  type ItemUnitSelection,
 } from "../utils/billing"
 import { getEffectiveGuestCount } from "../utils/devFlags"
 
@@ -49,6 +53,8 @@ export interface TableSession {
   checkoutLock: { guestId: string; expiresAt: string } | null
   /** Maps guardian orderId → optimistic cartIds for rollback on reject */
   pendingOrderLinks: Record<string, string[]>
+  /** Kitchen already started — item left the guest bill, house ate the cost. */
+  comps: CompRecord[]
 }
 
 interface SharedState {
@@ -75,7 +81,50 @@ function emptySession(tableId: string): TableSession {
     splitSnapshot: null,
     checkoutLock: null,
     pendingOrderLinks: {},
+    comps: [],
   }
+}
+
+function unlinkFromGuardian(
+  guardianQueue: GuardianOrder[],
+  pendingOrderLinks: Record<string, string[]>,
+  orderId: string,
+  cartId: string,
+  remainingSent: CartItem[]
+): { pendingOrderLinks: Record<string, string[]>; guardianQueue: GuardianOrder[] } {
+  const linkedIds = pendingOrderLinks[orderId]
+  if (!linkedIds) return { pendingOrderLinks, guardianQueue }
+
+  const nextLinks = linkedIds.filter((id) => id !== cartId)
+  if (nextLinks.length === 0) {
+    const { [orderId]: _, ...rest } = pendingOrderLinks
+    return {
+      pendingOrderLinks: rest,
+      guardianQueue: guardianQueue.filter((q) => !(q.id === orderId && q.status === "pending")),
+    }
+  }
+
+  const remainingItems = remainingSent.filter((i) => nextLinks.includes(i.cartId))
+  return {
+    pendingOrderLinks: { ...pendingOrderLinks, [orderId]: nextLinks },
+    guardianQueue: guardianQueue.map((q) => {
+      if (q.id !== orderId || q.status !== "pending") return q
+      return {
+        ...q,
+        items: remainingItems.map((i) => ({
+          name: i.name,
+          quantity: i.quantity,
+          modifiers: i.modifiers,
+          unitPrice: i.totalPrice,
+        })),
+        total: sumItems(remainingItems),
+      }
+    }),
+  }
+}
+
+function withLifecycle(session: TableSession): TableSession {
+  return { ...session, lifecycle: deriveLifecycle(session) }
 }
 
 function loadPersisted(): PersistedState | null {
@@ -136,9 +185,9 @@ interface GuestContextType {
   updateCartQty: (cartId: string, qty: number) => void
   removeFromCart: (cartId: string) => void
   sendToKitchen: () => void
-  cancelSentOrder: (orderId: string) => { ok: true } | { ok: false; reason: "expired" | "kitchen_started" | "not_found" }
+  cancelSentItem: (cartId: string) => { ok: true } | { ok: false; reason: GuestCancelReason }
   handleModifierConfirm: (item: MenuItem, qty: number, modifiers: string[], unitPrice: number) => void
-  lockSplitForCheckout: (method: SplitMethod, guestCount: number) => number
+  lockSplitForCheckout: (method: SplitMethod, guestCount: number, unitSelections?: ItemUnitSelection[]) => number
   recordPayment: (amount: number, tipAmount: number, method: SplitMethod) => void
   releaseCheckoutLock: () => void
 
@@ -151,6 +200,19 @@ interface GuestContextType {
   kdsTickets: KDSTicket[]
   advanceKdsTicket: (ticketId: string) => void
   bumpKdsTicket: (ticketId: string) => void
+
+  staffSendToKitchen: (
+    tableId: string,
+    items: Array<Pick<CartItem, "menuItemId" | "name" | "basePrice" | "totalPrice" | "quantity" | "modifiers">>,
+    options?: { notes?: string; orderedBy?: string }
+  ) => { ok: true } | { ok: false; reason: "empty" }
+  staffVoidItem: (tableId: string, cartId: string) => { ok: true } | { ok: false; reason: StaffBillReason }
+  staffCompItem: (
+    tableId: string,
+    cartId: string,
+    reason: string
+  ) => { ok: true } | { ok: false; reason: StaffBillReason }
+  staffRemoveCartItem: (tableId: string, cartId: string) => { ok: true } | { ok: false; reason: "not_found" }
 }
 
 const GuestContext = createContext<GuestContextType | null>(null)
@@ -337,6 +399,7 @@ export function GuestProvider() {
       sentAt,
       round: sendBatchNum,
       status: "sent" as const,
+      source: "guest",
     }))
     const linkedIds = optimisticSentItems.map((c) => c.cartId)
 
@@ -363,7 +426,7 @@ export function GuestProvider() {
 
       const kdsTickets = needsGuardian
         ? prev.kdsTickets
-        : [...prev.kdsTickets, ...createKdsTicketsFromCart(cart, parsedTableNum, sendBatchNum, orderId)]
+        : [...prev.kdsTickets, ...createKdsTicketsFromCart(optimisticSentItems, parsedTableNum, sendBatchNum, orderId)]
 
       return {
         ...prev,
@@ -389,57 +452,53 @@ export function GuestProvider() {
     setCartOpen(false)
   }
 
-  const cancelSentOrder = useCallback(
-    (orderId: string): { ok: true } | { ok: false; reason: "expired" | "kitchen_started" | "not_found" } => {
-      let result: { ok: true } | { ok: false; reason: "expired" | "kitchen_started" | "not_found" } = {
+  const cancelSentItem = useCallback(
+    (cartId: string): { ok: true } | { ok: false; reason: GuestCancelReason } => {
+      let result: { ok: true } | { ok: false; reason: GuestCancelReason } = {
         ok: false,
         reason: "not_found",
       }
 
       setShared((prev) => {
         const session = prev.sessions[resolvedTableId] ?? emptySession(resolvedTableId)
-        const batchItems = session.sentOrders.filter(
-          (i) => i.orderId === orderId || i.cartId.startsWith(`${orderId}-`)
-        )
-        if (batchItems.length === 0) {
+        const item = session.sentOrders.find((i) => i.cartId === cartId)
+        if (!item) {
           result = { ok: false, reason: "not_found" }
           return prev
         }
 
-        const sentAt = batchItems[0].sentAt
-        if (!sentAt || Date.now() - new Date(sentAt).getTime() > ORDER_UNDO_WINDOW_MS) {
+        if (!item.sentAt || Date.now() - new Date(item.sentAt).getTime() > ORDER_UNDO_WINDOW_MS) {
           result = { ok: false, reason: "expired" }
           return prev
         }
 
-        const kdsForOrder = prev.kdsTickets.filter(
-          (t) => t.id === `${orderId}-kitchen` || t.id === `${orderId}-bar`
-        )
-        if (kdsForOrder.some((t) => t.status !== "pending")) {
+        if (isItemKitchenStarted(prev.kdsTickets, cartId)) {
           result = { ok: false, reason: "kitchen_started" }
           return prev
         }
 
-        const { [orderId]: _, ...restLinks } = session.pendingOrderLinks
+        const remaining = session.sentOrders.filter((i) => i.cartId !== cartId)
+        const orderId = item.orderId ?? getItemOrderId(item)
+        const { pendingOrderLinks, guardianQueue } = unlinkFromGuardian(
+          prev.guardianQueue,
+          session.pendingOrderLinks,
+          orderId,
+          cartId,
+          remaining
+        )
         result = { ok: true }
 
         return {
           ...prev,
-          guardianQueue: prev.guardianQueue.filter(
-            (q) => !(q.id === orderId && q.status === "pending")
-          ),
-          kdsTickets: prev.kdsTickets.filter(
-            (t) => t.id !== `${orderId}-kitchen` && t.id !== `${orderId}-bar`
-          ),
+          guardianQueue,
+          kdsTickets: pullCartItemFromTickets(prev.kdsTickets, cartId),
           sessions: {
             ...prev.sessions,
-            [resolvedTableId]: {
+            [resolvedTableId]: withLifecycle({
               ...session,
-              sentOrders: session.sentOrders.filter(
-                (i) => !batchItems.some((b) => b.cartId === i.cartId)
-              ),
-              pendingOrderLinks: restLinks,
-            },
+              sentOrders: remaining,
+              pendingOrderLinks,
+            }),
           },
         }
       })
@@ -447,6 +506,218 @@ export function GuestProvider() {
       return result
     },
     [resolvedTableId]
+  )
+
+  const staffSendToKitchen = useCallback(
+    (
+      tableId: string,
+      items: Array<Pick<CartItem, "menuItemId" | "name" | "basePrice" | "totalPrice" | "quantity" | "modifiers">>,
+      options?: { notes?: string; orderedBy?: string }
+    ): { ok: true } | { ok: false; reason: "empty" } => {
+      if (items.length === 0) return { ok: false, reason: "empty" }
+
+      const parsedTableNum = parseInt(tableId.toString().replace(/\D/g, "")) || 1
+      const orderId = `gq-${Date.now()}`
+      const sentAt = new Date().toISOString()
+      const notes = options?.notes?.trim() ?? ""
+      const preferredGuestId = options?.orderedBy
+
+      setShared((prev) => {
+        const session = prev.sessions[tableId] ?? emptySession(tableId)
+        const sendBatchNum = session.sendBatch + 1
+        const orderedBy =
+          preferredGuestId ||
+          session.guests.find((g) => g.guestId.startsWith("staff-"))?.guestId ||
+          staffGuestId(tableId)
+
+        let guests = session.guests
+        if (!guests.some((g) => g.guestId === orderedBy)) {
+          guests = [
+            ...guests,
+            {
+              guestId: orderedBy,
+              displayName: orderedBy.startsWith("staff-") ? "Mesero" : `Comensal ${guests.length + 1}`,
+              joinedAt: sentAt,
+              index: guests.length,
+            },
+          ]
+        }
+
+        const sentItems: CartItem[] = items.map((item, idx) => ({
+          cartId: `${orderId}-${idx}`,
+          menuItemId: item.menuItemId,
+          name: item.name,
+          basePrice: item.basePrice,
+          totalPrice: item.totalPrice,
+          quantity: item.quantity,
+          modifiers: item.modifiers,
+          round: sendBatchNum,
+          status: "sent" as const,
+          orderedBy,
+          receiptCycle: session.receiptCycle,
+          sentAt,
+          orderId,
+          source: "staff",
+        }))
+
+        const nextSession = withLifecycle({
+          ...session,
+          guests,
+          cart: session.cart,
+          sentOrders: [...session.sentOrders, ...sentItems],
+          sendBatch: sendBatchNum,
+        })
+
+        return {
+          ...prev,
+          kdsTickets: [
+            ...prev.kdsTickets,
+            ...createKdsTicketsFromCart(sentItems, parsedTableNum, sendBatchNum, orderId, MENU_ITEMS, notes),
+          ],
+          sessions: {
+            ...prev.sessions,
+            [tableId]: nextSession,
+          },
+        }
+      })
+
+      return { ok: true }
+    },
+    []
+  )
+
+  const staffVoidItem = useCallback(
+    (tableId: string, cartId: string): { ok: true } | { ok: false; reason: StaffBillReason } => {
+      let result: { ok: true } | { ok: false; reason: StaffBillReason } = { ok: false, reason: "not_found" }
+
+      setShared((prev) => {
+        const session = prev.sessions[tableId] ?? emptySession(tableId)
+        const item = session.sentOrders.find((i) => i.cartId === cartId)
+        if (!item) {
+          result = { ok: false, reason: "not_found" }
+          return prev
+        }
+        if (isReceiptCyclePaid(item, session.sentOrders, session.cart, session.payments)) {
+          result = { ok: false, reason: "paid" }
+          return prev
+        }
+        if (isItemKitchenStarted(prev.kdsTickets, cartId)) {
+          result = { ok: false, reason: "kitchen_started" }
+          return prev
+        }
+
+        const remaining = session.sentOrders.filter((i) => i.cartId !== cartId)
+        const orderId = item.orderId ?? getItemOrderId(item)
+        const { pendingOrderLinks, guardianQueue } = unlinkFromGuardian(
+          prev.guardianQueue,
+          session.pendingOrderLinks,
+          orderId,
+          cartId,
+          remaining
+        )
+        result = { ok: true }
+
+        return {
+          ...prev,
+          guardianQueue,
+          kdsTickets: pullCartItemFromTickets(prev.kdsTickets, cartId),
+          sessions: {
+            ...prev.sessions,
+            [tableId]: withLifecycle({
+              ...session,
+              sentOrders: remaining,
+              pendingOrderLinks,
+            }),
+          },
+        }
+      })
+
+      return result
+    },
+    []
+  )
+
+  const staffCompItem = useCallback(
+    (
+      tableId: string,
+      cartId: string,
+      reason: string
+    ): { ok: true } | { ok: false; reason: StaffBillReason } => {
+      let result: { ok: true } | { ok: false; reason: StaffBillReason } = { ok: false, reason: "not_found" }
+
+      setShared((prev) => {
+        const session = prev.sessions[tableId] ?? emptySession(tableId)
+        const item = session.sentOrders.find((i) => i.cartId === cartId)
+        if (!item) {
+          result = { ok: false, reason: "not_found" }
+          return prev
+        }
+        if (isReceiptCyclePaid(item, session.sentOrders, session.cart, session.payments)) {
+          result = { ok: false, reason: "paid" }
+          return prev
+        }
+        if (!isItemKitchenStarted(prev.kdsTickets, cartId)) {
+          result = { ok: false, reason: "still_pending" }
+          return prev
+        }
+
+        const remaining = session.sentOrders.filter((i) => i.cartId !== cartId)
+        const ticket = prev.kdsTickets.find((t) => t.items.some((i) => i.id === cartId))
+        const comp: CompRecord = {
+          id: `comp-${Date.now()}`,
+          cartId: item.cartId,
+          name: item.name,
+          quantity: item.quantity,
+          unitPrice: item.totalPrice,
+          reason: reason.trim() || "Cortesía de la casa",
+          createdAt: new Date().toISOString(),
+          orderedBy: item.orderedBy,
+          kdsStatus: ticket?.status ?? "none",
+        }
+        result = { ok: true }
+
+        return {
+          ...prev,
+          sessions: {
+            ...prev.sessions,
+            [tableId]: withLifecycle({
+              ...session,
+              sentOrders: remaining,
+              comps: [...(session.comps ?? []), comp],
+            }),
+          },
+        }
+      })
+
+      return result
+    },
+    []
+  )
+
+  const staffRemoveCartItem = useCallback(
+    (tableId: string, cartId: string): { ok: true } | { ok: false; reason: "not_found" } => {
+      let result: { ok: true } | { ok: false; reason: "not_found" } = { ok: false, reason: "not_found" }
+      setShared((prev) => {
+        const session = prev.sessions[tableId] ?? emptySession(tableId)
+        if (!session.cart.some((i) => i.cartId === cartId)) {
+          result = { ok: false, reason: "not_found" }
+          return prev
+        }
+        result = { ok: true }
+        return {
+          ...prev,
+          sessions: {
+            ...prev.sessions,
+            [tableId]: withLifecycle({
+              ...session,
+              cart: session.cart.filter((i) => i.cartId !== cartId),
+            }),
+          },
+        }
+      })
+      return result
+    },
+    []
   )
 
   const approveGuardianOrder = (orderId: string) => {
@@ -529,35 +800,43 @@ export function GuestProvider() {
     }))
   }
 
-  const lockSplitForCheckout = (method: SplitMethod, guestCount: number): number => {
+  const lockSplitForCheckout = (
+    method: SplitMethod,
+    guestCount: number,
+    unitSelections?: ItemUnitSelection[]
+  ): number => {
     const openItems = getOpenBillItems(
       currentSession.sentOrders,
       currentSession.cart,
       currentSession.payments
     )
-    const allItems = openItems
-    const billTotal = sumItems(allItems)
+    const billTotal = sumItems(openItems)
     const paidTotal = currentSession.payments.reduce((s, p) => s + p.amount, 0)
     const remaining = Math.max(0, billTotal - paidTotal)
-    const lockedSubtotal = currentSession.splitSnapshot?.lockedSubtotal ?? billTotal
-    const splitBase = currentSession.splitSnapshot
-      ? Math.max(0, lockedSubtotal - paidTotal)
-      : remaining
+    const settlement = buildItemSettlementMap(
+      currentSession.sentOrders,
+      currentSession.cart,
+      currentSession.payments
+    )
 
     const scannedCount = getEffectiveGuestCount(currentSession.guests.length)
     const count = Math.min(Math.max(guestCount, 2), Math.max(scannedCount, 2))
 
     let amount = remaining
     if (method === "equal") {
-      amount = getGuestEqualShare(splitBase, count, guestIndex)
-    } else if (method === "myItems") {
-      amount = sumGuestItems(allItems, guestId)
+      amount = getGuestEqualShare(remaining, count, guestIndex)
+    } else if (method === "myItems" && unitSelections?.some((s) => s.units > 0)) {
+      amount = sumDueForUnitSelections(settlement, openItems, unitSelections)
     }
+
+    amount = Math.min(Math.max(0, amount), remaining)
 
     updateSession(resolvedTableId, (s) => ({
       ...s,
       lifecycle: "paying",
-      splitSnapshot: s.splitSnapshot ?? createSplitSnapshot(method, lockedSubtotal, count),
+      splitSnapshot:
+        s.splitSnapshot ??
+        createSplitSnapshot(method, remaining, count),
       checkoutLock: {
         guestId,
         expiresAt: new Date(Date.now() + CHECKOUT_LOCK_MS).toISOString(),
@@ -693,7 +972,7 @@ export function GuestProvider() {
         updateCartQty,
         removeFromCart,
         sendToKitchen,
-        cancelSentOrder,
+        cancelSentItem,
         handleModifierConfirm,
         lockSplitForCheckout,
         recordPayment,
@@ -706,6 +985,10 @@ export function GuestProvider() {
         kdsTickets: shared.kdsTickets,
         advanceKdsTicket,
         bumpKdsTicket,
+        staffSendToKitchen,
+        staffVoidItem,
+        staffCompItem,
+        staffRemoveCartItem,
       }}
     >
       <Outlet />

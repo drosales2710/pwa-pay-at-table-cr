@@ -7,9 +7,11 @@ import { formatCRC, formatUSD } from "../utils/format"
 import { groupByReceiptCycle } from "../utils/billing"
 import {
   undoSecondsRemaining,
-  canUndoBatch,
+  canGuestUndoItem,
+  type GuestCancelReason,
   type SentOrderBatch,
 } from "../utils/order"
+import { isItemKitchenStarted } from "../utils/kds"
 
 interface OrderHistoryScreenProps {
   sentOrders: CartItem[]
@@ -19,7 +21,7 @@ interface OrderHistoryScreenProps {
   onBack: () => void
   onRequestBill: () => void
   onOpenCart: () => void
-  onCancelOrder: (orderId: string) => { ok: true } | { ok: false; reason: "expired" | "kitchen_started" | "not_found" }
+  onCancelItem: (cartId: string) => { ok: true } | { ok: false; reason: GuestCancelReason }
   kdsTickets: KDSTicket[]
   tableId: string
 }
@@ -32,7 +34,7 @@ export default function OrderHistoryScreen({
   onBack,
   onRequestBill,
   onOpenCart,
-  onCancelOrder,
+  onCancelItem,
   kdsTickets,
   tableId,
 }: OrderHistoryScreenProps) {
@@ -51,10 +53,10 @@ export default function OrderHistoryScreen({
   const paidTotal = payments.reduce((s, p) => s + p.amount, 0)
   const openTotal = Math.max(0, grandTotal - paidTotal)
 
-  const handleCancel = (orderId: string) => {
-    const result = onCancelOrder(orderId)
+  const handleCancel = (cartId: string) => {
+    const result = onCancelItem(cartId)
     if (result.ok) {
-      setCancelMessage("Pedido cancelado / Order cancelled")
+      setCancelMessage("Artículo cancelado / Item cancelled")
       setTimeout(() => setCancelMessage(null), 2500)
     } else if (result.reason === "kitchen_started") {
       setCancelMessage("La cocina ya comenzó — contacta a tu mesero / Kitchen started — ask your server")
@@ -149,7 +151,7 @@ export default function OrderHistoryScreen({
                     batch={batch}
                     now={now}
                     kdsTickets={kdsTickets}
-                    onCancel={() => handleCancel(batch.orderId)}
+                    onCancelItem={handleCancel}
                   />
                 ))}
               </div>
@@ -274,19 +276,18 @@ function SentBatchCard({
   batch,
   now,
   kdsTickets,
-  onCancel,
+  onCancelItem,
 }: {
   batch: SentOrderBatch
   now: number
   kdsTickets: KDSTicket[]
-  onCancel: () => void
+  onCancelItem: (cartId: string) => void
 }) {
   const secondsLeft = undoSecondsRemaining(batch.sentAt, now)
-  const kdsForOrder = kdsTickets.filter(
-    (t) => t.id === `${batch.orderId}-kitchen` || t.id === `${batch.orderId}-bar`
+  const undoableItems = batch.items.filter((item) =>
+    canGuestUndoItem(item.sentAt, isItemKitchenStarted(kdsTickets, item.cartId), now)
   )
-  const kitchenStarted = kdsForOrder.some((t) => t.status !== "pending")
-  const canUndo = canUndoBatch(batch.sentAt, now) && !kitchenStarted
+  const anyUndoable = undoableItems.length > 0
   const batchTotal = batch.items.reduce((s, i) => s + i.totalPrice * i.quantity, 0)
   const sentTime = new Date(batch.sentAt).toLocaleTimeString("es-CR", {
     hour: "2-digit",
@@ -295,67 +296,73 @@ function SentBatchCard({
 
   return (
     <div className="bg-card rounded-2xl border border-border overflow-hidden">
-      {canUndo && (
-        <div className="px-4 py-2.5 bg-amber-50 border-b border-amber-100 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5">
-            <Clock size={14} className="text-amber-600" />
-            <span className="text-amber-800" style={{ fontSize: "0.72rem", fontWeight: 600 }}>
-              {secondsLeft}s para cancelar · {secondsLeft}s to undo
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={onCancel}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-amber-200 text-amber-800 active:scale-95 transition-transform"
-            style={{ fontSize: "0.68rem", fontWeight: 700 }}
-          >
-            <Undo2 size={12} />
-            Deshacer
-          </button>
+      {anyUndoable && (
+        <div className="px-4 py-2.5 bg-amber-50 border-b border-amber-100 flex items-center gap-1.5">
+          <Clock size={14} className="text-amber-600" />
+          <span className="text-amber-800" style={{ fontSize: "0.72rem", fontWeight: 600 }}>
+            {secondsLeft}s para cancelar artículos · {secondsLeft}s to undo items
+          </span>
         </div>
       )}
 
-      {batch.items.map((item, idx) => (
-        <div
-          key={item.cartId}
-          className={`px-4 py-3.5 flex items-start justify-between gap-3 ${
-            idx < batch.items.length - 1 ? "border-b border-border" : ""
-          }`}
-        >
-          <div className="flex-1">
-            <div className="flex items-start gap-2">
-              <span
-                className="bg-muted text-foreground rounded-md px-1.5 py-0.5 flex-shrink-0"
-                style={{ fontSize: "0.7rem", fontWeight: 700 }}
-              >
-                {item.quantity}×
-              </span>
-              <div>
-                <p className="text-foreground" style={{ fontSize: "0.88rem", fontWeight: 600 }}>
-                  {item.name}
-                </p>
-                {item.modifiers.length > 0 && (
-                  <p className="text-muted-foreground mt-0.5" style={{ fontSize: "0.72rem" }}>
-                    {item.modifiers.join(" · ")}
+      {batch.items.map((item, idx) => {
+        const started = isItemKitchenStarted(kdsTickets, item.cartId)
+        const itemUndoable = canGuestUndoItem(item.sentAt, started, now)
+        return (
+          <div
+            key={item.cartId}
+            className={`px-4 py-3.5 flex items-start justify-between gap-3 ${
+              idx < batch.items.length - 1 ? "border-b border-border" : ""
+            }`}
+          >
+            <div className="flex-1 min-w-0">
+              <div className="flex items-start gap-2">
+                <span
+                  className="bg-muted text-foreground rounded-md px-1.5 py-0.5 flex-shrink-0"
+                  style={{ fontSize: "0.7rem", fontWeight: 700 }}
+                >
+                  {item.quantity}×
+                </span>
+                <div className="min-w-0">
+                  <p className="text-foreground" style={{ fontSize: "0.88rem", fontWeight: 600 }}>
+                    {item.name}
                   </p>
-                )}
-                <div className="flex items-center gap-1 mt-1">
-                  <CheckCircle2 size={10} className="text-status-green" />
-                  <span className="text-status-green" style={{ fontSize: "0.65rem", fontWeight: 600 }}>
-                    {canUndo ? "Enviado" : "Confirmado"}
-                  </span>
+                  {item.modifiers.length > 0 && (
+                    <p className="text-muted-foreground mt-0.5" style={{ fontSize: "0.72rem" }}>
+                      {item.modifiers.join(" · ")}
+                    </p>
+                  )}
+                  <div className="flex items-center gap-1 mt-1">
+                    <CheckCircle2 size={10} className="text-status-green" />
+                    <span className="text-status-green" style={{ fontSize: "0.65rem", fontWeight: 600 }}>
+                      {itemUndoable ? "Enviado" : started ? "En cocina" : "Confirmado"}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
+            <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+              <span
+                className="text-foreground"
+                style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700, fontSize: "0.88rem" }}
+              >
+                {formatCRC(item.totalPrice * item.quantity)}
+              </span>
+              {itemUndoable && (
+                <button
+                  type="button"
+                  onClick={() => onCancelItem(item.cartId)}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 active:scale-95 transition-transform"
+                  style={{ fontSize: "0.65rem", fontWeight: 700 }}
+                >
+                  <Undo2 size={12} />
+                  Deshacer
+                </button>
+              )}
+            </div>
           </div>
-          <span
-            className="text-foreground flex-shrink-0"
-            style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700, fontSize: "0.88rem" }}
-          >
-            {formatCRC(item.totalPrice * item.quantity)}
-          </span>
-        </div>
-      ))}
+        )
+      })}
 
       <div className="px-4 py-2 bg-muted/40 border-t border-border flex justify-between items-center">
         <span className="text-muted-foreground" style={{ fontSize: "0.68rem", fontWeight: 600 }}>

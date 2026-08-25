@@ -41,6 +41,20 @@ export interface CartItem {
   /** Set when sent to kitchen — used for undo window */
   sentAt?: string
   orderId?: string
+  /** Staff-entered lines are attributed to a guest or the waiter. */
+  source?: "guest" | "staff"
+}
+
+export interface CompRecord {
+  id: string
+  cartId: string
+  name: string
+  quantity: number
+  unitPrice: number
+  reason: string
+  createdAt: string
+  orderedBy: string
+  kdsStatus: "pending" | "preparing" | "ready" | "delivered" | "none"
 }
 
 export type TableLifecycleStatus =

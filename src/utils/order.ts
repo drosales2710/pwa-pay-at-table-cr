@@ -1,6 +1,6 @@
 import type { CartItem } from "../types"
 
-/** Guest can undo a sent round within this window before kitchen starts preparing. */
+/** Guest can undo a sent line within this window before that station starts preparing. */
 export const ORDER_UNDO_WINDOW_MS = 60 * 1000
 
 export function extractOrderId(cartId: string): string | null {
@@ -52,4 +52,12 @@ export function undoSecondsRemaining(sentAt: string, now = Date.now()): number {
 
 export function canUndoBatch(sentAt: string, now = Date.now()): boolean {
   return undoSecondsRemaining(sentAt, now) > 0
+}
+
+export type GuestCancelReason = "expired" | "kitchen_started" | "not_found"
+export type StaffBillReason = "not_found" | "kitchen_started" | "still_pending" | "paid"
+
+export function canGuestUndoItem(sentAt: string | undefined, kitchenStarted: boolean, now = Date.now()): boolean {
+  if (!sentAt || !canUndoBatch(sentAt, now)) return false
+  return !kitchenStarted
 }

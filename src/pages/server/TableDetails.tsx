@@ -1,51 +1,103 @@
 import { useState } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { ChevronLeft, CheckCircle2, XCircle, Clock, Users, Plus, ChefHat, CreditCard, TriangleAlert } from "lucide-react"
+import {
+  ChevronLeft,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  Users,
+  Plus,
+  ChefHat,
+  CreditCard,
+  TriangleAlert,
+  Trash2,
+  Lock,
+  Ban,
+  Gift,
+  Minus,
+} from "lucide-react"
 import PortalSwitcher from "../../components/PortalSwitcher"
-import { formatCRCShort, elapsedMins, type GuardianOrder } from "../../data/mockData"
+import StaffMenuPicker from "../../components/StaffMenuPicker"
+import ModifierModal from "../../components/ModifierModal"
+import { elapsedMins, type GuardianOrder, type KDSTicket } from "../../data/mockData"
 import { formatCRC } from "../../utils/format"
+import { findKdsTicketForCartItem, isItemKitchenStarted } from "../../utils/kds"
+import { isReceiptCyclePaid, staffGuestId } from "../../utils/billEdit"
 import { useGuest } from "../../context/GuestContext"
+import type { CartItem, CompRecord, MenuItem, Restaurant, TableGuest, PaymentRecord } from "../../types"
+
+const COMP_REASONS = [
+  "Cortesía de la casa",
+  "Error de pedido",
+  "Artículo incorrecto",
+  "Cliente insatisfecho",
+]
 
 export default function TableDetails() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { 
-    allTables, 
-    guardianQueue, 
-    approveGuardianOrder, 
-    rejectGuardianOrder, 
-    getTableSession 
+  const {
+    restaurant,
+    allTables,
+    guardianQueue,
+    approveGuardianOrder,
+    rejectGuardianOrder,
+    getTableSession,
+    kdsTickets,
+    staffSendToKitchen,
+    staffVoidItem,
+    staffCompItem,
+    staffRemoveCartItem,
   } = useGuest()
 
   const table = allTables.find((t) => t.id === id) || allTables[0]
-  const session = getTableSession(table.number.toString())
-  const queue = guardianQueue.filter((q) => q.tableId === table.number.toString())
-  
+  const tableId = table.number.toString()
+  const session = getTableSession(tableId)
+  const queue = guardianQueue.filter((q) => q.tableId === tableId)
+
   const [activeTab, setActiveTab] = useState<"guardian" | "orders" | "manual">("guardian")
   const pendingCount = queue.filter((q) => q.status === "pending").length
+  const [banner, setBanner] = useState<string | null>(null)
+
+  const showBanner = (msg: string) => {
+    setBanner(msg)
+    window.setTimeout(() => setBanner(null), 2800)
+  }
 
   return (
     <div className="flex justify-center items-start min-h-screen" style={{ background: "#E5E0DA" }}>
-      <div className="w-full max-w-[430px] min-h-screen bg-background flex flex-col shadow-2xl">
-        {/* Header */}
+      <div className="relative w-full max-w-[430px] min-h-screen bg-background flex flex-col shadow-2xl">
         <header className="safe-top bg-card border-b border-border px-5 pt-5 pb-4 flex-shrink-0 shadow-sm">
           <div className="flex items-center gap-3 mb-4">
-            <button onClick={() => navigate("/server/floor-plan")} className="w-9 h-9 flex items-center justify-center bg-muted rounded-full active:scale-95 transition-transform">
+            <button
+              onClick={() => navigate("/server/floor-plan")}
+              className="w-9 h-9 flex items-center justify-center bg-muted rounded-full active:scale-95 transition-transform"
+            >
               <ChevronLeft size={18} />
             </button>
             <div className="flex-1 space-y-0.5">
-              <h1 className="text-foreground" style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700, fontSize: "1.2rem", lineHeight: 1.2 }}>
-                Mesa #{table.number} <span className="text-muted-foreground" style={{ fontWeight: 400, fontSize: "0.78rem" }}>/ Table #{table.number}</span>
+              <h1
+                className="text-foreground"
+                style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700, fontSize: "1.2rem", lineHeight: 1.2 }}
+              >
+                Mesa #{table.number}{" "}
+                <span className="text-muted-foreground" style={{ fontWeight: 400, fontSize: "0.78rem" }}>
+                  / Table #{table.number}
+                </span>
               </h1>
               <div className="flex items-center gap-3 flex-wrap">
                 <div className="flex items-center gap-1">
                   <Users size={12} className="text-muted-foreground" />
-                  <span className="text-muted-foreground" style={{ fontSize: "0.75rem" }}>{table.guestCount} comensales / guests</span>
+                  <span className="text-muted-foreground" style={{ fontSize: "0.75rem" }}>
+                    {table.guestCount} comensales / guests
+                  </span>
                 </div>
                 {table.openedAt && (
                   <div className="flex items-center gap-1">
                     <Clock size={12} className="text-muted-foreground" />
-                    <span className="text-muted-foreground" style={{ fontSize: "0.75rem" }}>{elapsedMins(table.openedAt)} min</span>
+                    <span className="text-muted-foreground" style={{ fontSize: "0.75rem" }}>
+                      {elapsedMins(table.openedAt)} min
+                    </span>
                   </div>
                 )}
               </div>
@@ -67,23 +119,27 @@ export default function TableDetails() {
               <div className="mb-2">
                 <PortalSwitcher />
               </div>
-              <p className="text-foreground animate-pulse" style={{ fontFamily: "Outfit, sans-serif", fontWeight: 800, fontSize: "1.15rem", lineHeight: 1.1 }}>
+              <p
+                className="text-foreground animate-pulse"
+                style={{ fontFamily: "Outfit, sans-serif", fontWeight: 800, fontSize: "1.15rem", lineHeight: 1.1 }}
+              >
                 {formatCRC(table.billTotal)}
               </p>
-              <p className="text-muted-foreground" style={{ fontSize: "0.7rem" }}>Total acumulado</p>
+              <p className="text-muted-foreground" style={{ fontSize: "0.7rem" }}>
+                Total acumulado
+              </p>
             </div>
           </div>
 
-          {/* Tabs */}
           <div className="flex gap-1">
             {[
-              { id: "guardian", label: "Guardian", badge: pendingCount },
-              { id: "orders", label: "Consumo" },
-              { id: "manual", label: "Agregar" },
+              { id: "guardian" as const, label: "Guardian", badge: pendingCount },
+              { id: "orders" as const, label: "Consumo", badge: 0 },
+              { id: "manual" as const, label: "Agregar", badge: 0 },
             ].map((tab) => (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id as typeof activeTab)}
+                onClick={() => setActiveTab(tab.id)}
                 className={`relative flex-1 py-2 rounded-xl border transition-all ${
                   activeTab === tab.id
                     ? "border-[#6366F1] bg-[#6366F1] text-white"
@@ -92,8 +148,11 @@ export default function TableDetails() {
                 style={{ fontSize: "0.78rem", fontWeight: 700 }}
               >
                 {tab.label}
-                {tab.badge != null && tab.badge > 0 && (
-                  <span className="absolute -top-1.5 -right-1 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center" style={{ fontSize: "0.55rem" }}>
+                {tab.badge > 0 && (
+                  <span
+                    className="absolute -top-1.5 -right-1 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center"
+                    style={{ fontSize: "0.55rem" }}
+                  >
                     {tab.badge}
                   </span>
                 )}
@@ -102,20 +161,68 @@ export default function TableDetails() {
           </div>
         </header>
 
-        {/* Content */}
+        {banner && (
+          <div
+            className="mx-5 mt-3 px-3 py-2 rounded-xl bg-primary/10 text-primary text-center"
+            style={{ fontSize: "0.75rem", fontWeight: 600 }}
+          >
+            {banner}
+          </div>
+        )}
+
         <div className="flex-1 overflow-y-auto px-5 py-5 pb-28">
           {activeTab === "guardian" && (
             <GuardianTab queue={queue} onApprove={approveGuardianOrder} onReject={rejectGuardianOrder} />
           )}
           {activeTab === "orders" && (
-            <OrdersTab items={session?.sentOrders || []} total={table.billTotal} guests={session?.guests ?? []} />
+            <OrdersTab
+              sentOrders={session?.sentOrders ?? []}
+              cart={session?.cart ?? []}
+              comps={session?.comps ?? []}
+              guests={session?.guests ?? []}
+              payments={session?.payments ?? []}
+              pendingOrderLinks={session?.pendingOrderLinks ?? {}}
+              kdsTickets={kdsTickets}
+              total={table.billTotal}
+              onVoid={(cartId) => {
+                const result = staffVoidItem(tableId, cartId)
+                if (result.ok) showBanner("Artículo anulado y quitado de cocina / Voided")
+                else if (result.reason === "kitchen_started")
+                  showBanner("La cocina ya comenzó — usa Cortesía / Kitchen started — Comp")
+                else if (result.reason === "paid")
+                  showBanner("Ya pagado — requiere reembolso / Paid — needs refund")
+                else showBanner("No se pudo anular / Could not void")
+              }}
+              onComp={(cartId, reason) => {
+                const result = staffCompItem(tableId, cartId, reason)
+                if (result.ok) showBanner("Cortesía aplicada — no se cobra / Comp applied")
+                else if (result.reason === "still_pending")
+                  showBanner("Aún en cola — anula en su lugar / Still pending — void instead")
+                else if (result.reason === "paid")
+                  showBanner("Ya pagado — requiere reembolso / Paid — needs refund")
+                else showBanner("No se pudo aplicar cortesía / Could not comp")
+              }}
+              onRemoveCart={(cartId) => {
+                const result = staffRemoveCartItem(tableId, cartId)
+                if (result.ok) showBanner("Quitado del carrito / Removed from cart")
+              }}
+            />
           )}
           {activeTab === "manual" && (
-            <ManualOrderTab tableNumber={table.number} />
+            <ManualOrderTab
+              tableId={tableId}
+              tableNumber={table.number}
+              restaurant={restaurant}
+              guests={session?.guests ?? []}
+              onSent={() => {
+                showBanner("Enviado a cocina / Sent to kitchen")
+                setActiveTab("orders")
+              }}
+              staffSendToKitchen={staffSendToKitchen}
+            />
           )}
         </div>
 
-        {/* Bottom actions */}
         <div className="safe-bottom border-t border-border bg-card px-5 py-4 flex gap-3">
           <button
             onClick={() => navigate(`/m/${table.number}`)}
@@ -138,13 +245,25 @@ export default function TableDetails() {
   )
 }
 
-function GuardianTab({ queue, onApprove, onReject }: { queue: GuardianOrder[]; onApprove: (id: string) => void; onReject: (id: string) => void }) {
+function GuardianTab({
+  queue,
+  onApprove,
+  onReject,
+}: {
+  queue: GuardianOrder[]
+  onApprove: (id: string) => void
+  onReject: (id: string) => void
+}) {
   if (queue.length === 0) {
     return (
       <div className="text-center py-12">
         <CheckCircle2 size={40} className="text-status-green mx-auto mb-3" />
-        <p className="text-foreground" style={{ fontSize: "0.9rem", fontWeight: 600 }}>Sin pedidos pendientes</p>
-        <p className="text-muted-foreground mt-1" style={{ fontSize: "0.78rem" }}>No pending orders</p>
+        <p className="text-foreground" style={{ fontSize: "0.9rem", fontWeight: 600 }}>
+          Sin pedidos pendientes
+        </p>
+        <p className="text-muted-foreground mt-1" style={{ fontSize: "0.78rem" }}>
+          No pending orders
+        </p>
       </div>
     )
   }
@@ -158,14 +277,22 @@ function GuardianTab({ queue, onApprove, onReject }: { queue: GuardianOrder[]; o
         </p>
       </div>
       {queue.map((order) => (
-        <div key={order.id} className={`bg-card rounded-2xl border p-4 mb-3 ${
-          order.status === "approved" ? "border-status-green opacity-60" :
-          order.status === "rejected" ? "border-status-red opacity-60" :
-          "border-status-yellow"
-        }`}>
+        <div
+          key={order.id}
+          className={`bg-card rounded-2xl border p-4 mb-3 ${
+            order.status === "approved"
+              ? "border-status-green opacity-60"
+              : order.status === "rejected"
+                ? "border-status-red opacity-60"
+                : "border-status-yellow"
+          }`}
+        >
           <div className="flex justify-between items-start mb-3">
             <div>
-              <p className="text-foreground" style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700, fontSize: "0.9rem" }}>
+              <p
+                className="text-foreground"
+                style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700, fontSize: "0.9rem" }}
+              >
                 Ronda de pedido #{order.id.slice(-4)}
               </p>
               <p className="text-muted-foreground" style={{ fontSize: "0.72rem" }}>
@@ -176,8 +303,10 @@ function GuardianTab({ queue, onApprove, onReject }: { queue: GuardianOrder[]; o
               </p>
             </div>
             {order.status !== "pending" && (
-              <span className={`px-2 py-0.5 rounded-full text-white ${order.status === "approved" ? "bg-status-green" : "bg-status-red"}`}
-                style={{ fontSize: "0.68rem", fontWeight: 700 }}>
+              <span
+                className={`px-2 py-0.5 rounded-full text-white ${order.status === "approved" ? "bg-status-green" : "bg-status-red"}`}
+                style={{ fontSize: "0.68rem", fontWeight: 700 }}
+              >
                 {order.status === "approved" ? "Aprobado" : "Rechazado"}
               </span>
             )}
@@ -185,27 +314,43 @@ function GuardianTab({ queue, onApprove, onReject }: { queue: GuardianOrder[]; o
           {order.reasons && order.reasons.length > 0 && (
             <div className="mb-2 px-2 py-1.5 bg-amber-50 rounded-lg border border-amber-100">
               {order.reasons.map((r, ri) => (
-                <p key={ri} className="text-amber-800" style={{ fontSize: "0.68rem" }}>• {r}</p>
+                <p key={ri} className="text-amber-800" style={{ fontSize: "0.68rem" }}>
+                  • {r}
+                </p>
               ))}
             </div>
           )}
           {order.items.map((item, i) => (
             <div key={i} className="flex items-start gap-2 mb-1.5">
-              <span className="text-muted-foreground bg-muted px-1.5 rounded" style={{ fontSize: "0.7rem", fontWeight: 700 }}>{item.quantity}×</span>
+              <span className="text-muted-foreground bg-muted px-1.5 rounded" style={{ fontSize: "0.7rem", fontWeight: 700 }}>
+                {item.quantity}×
+              </span>
               <div>
-                <p className="text-foreground" style={{ fontSize: "0.82rem", fontWeight: 600 }}>{item.name}</p>
+                <p className="text-foreground" style={{ fontSize: "0.82rem", fontWeight: 600 }}>
+                  {item.name}
+                </p>
                 {item.modifiers.length > 0 && (
-                  <p className="text-muted-foreground" style={{ fontSize: "0.7rem" }}>{item.modifiers.join(", ")}</p>
+                  <p className="text-muted-foreground" style={{ fontSize: "0.7rem" }}>
+                    {item.modifiers.join(", ")}
+                  </p>
                 )}
               </div>
             </div>
           ))}
           {order.status === "pending" && (
             <div className="flex gap-2 mt-3">
-              <button onClick={() => onReject(order.id)} className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-red-200 text-red-500 active:bg-red-50" style={{ fontSize: "0.82rem", fontWeight: 700 }}>
+              <button
+                onClick={() => onReject(order.id)}
+                className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-red-200 text-red-500 active:bg-red-50"
+                style={{ fontSize: "0.82rem", fontWeight: 700 }}
+              >
                 <XCircle size={15} /> Rechazar / Reject
               </button>
-              <button onClick={() => onApprove(order.id)} className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-white" style={{ background: "#6366F1", fontSize: "0.82rem", fontWeight: 700 }}>
+              <button
+                onClick={() => onApprove(order.id)}
+                className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-white"
+                style={{ background: "#6366F1", fontSize: "0.82rem", fontWeight: 700 }}
+              >
                 <CheckCircle2 size={15} /> Aprobar / Approve
               </button>
             </div>
@@ -216,58 +361,429 @@ function GuardianTab({ queue, onApprove, onReject }: { queue: GuardianOrder[]; o
   )
 }
 
-function OrdersTab({ items, total, guests }: { items: Array<{ name: string; quantity: number; totalPrice: number; round: number; orderedBy: string; modifiers?: string[] }>; total: number; guests: Array<{ guestId: string; displayName: string }> }) {
+function OrdersTab({
+  sentOrders,
+  cart,
+  comps,
+  guests,
+  payments,
+  pendingOrderLinks,
+  kdsTickets,
+  total,
+  onVoid,
+  onComp,
+  onRemoveCart,
+}: {
+  sentOrders: CartItem[]
+  cart: CartItem[]
+  comps: CompRecord[]
+  guests: TableGuest[]
+  payments: PaymentRecord[]
+  pendingOrderLinks: Record<string, string[]>
+  kdsTickets: KDSTicket[]
+  total: number
+  onVoid: (cartId: string) => void
+  onComp: (cartId: string, reason: string) => void
+  onRemoveCart: (cartId: string) => void
+}) {
+  const [compTarget, setCompTarget] = useState<CartItem | null>(null)
+  const [compReason, setCompReason] = useState(COMP_REASONS[0])
   const guestName = (guestId: string) => guests.find((g) => g.guestId === guestId)?.displayName ?? "Comensal"
+  const pendingIds = new Set(Object.values(pendingOrderLinks).flat())
 
-  if (items.length === 0) {
+  if (sentOrders.length === 0 && cart.length === 0 && comps.length === 0) {
     return (
       <div className="text-center py-12">
-        <p className="text-muted-foreground" style={{ fontSize: "0.85rem" }}>No hay consumo registrado aún</p>
+        <p className="text-muted-foreground" style={{ fontSize: "0.85rem" }}>
+          No hay consumo registrado aún
+        </p>
       </div>
     )
   }
+
   return (
-    <div>
-      <div className="bg-card rounded-2xl border border-border overflow-hidden">
-        {items.map((item, i) => (
-          <div key={i} className={`px-4 py-3 flex justify-between gap-2 ${i < items.length - 1 ? "border-b border-border" : ""}`}>
-            <div>
-              <p className="text-foreground" style={{ fontSize: "0.85rem", fontWeight: 600 }}>{item.quantity > 1 ? `${item.quantity}× ` : ""}{item.name}</p>
-              <div className="flex flex-wrap gap-1 mt-0.5">
-                <span className="bg-muted text-muted-foreground px-1.5 rounded" style={{ fontSize: "0.65rem" }}>Cuenta {item.receiptCycle}</span>
-                {item.round > 0 && (
-                  <span className="bg-muted text-muted-foreground px-1.5 rounded" style={{ fontSize: "0.65rem" }}>Envío {item.round}</span>
-                )}
-                <span className="bg-primary/10 text-primary px-1.5 rounded" style={{ fontSize: "0.65rem", fontWeight: 600 }}>{guestName(item.orderedBy)}</span>
+    <div className="space-y-4">
+      {cart.length > 0 && (
+        <div>
+          <p className="text-muted-foreground mb-2" style={{ fontSize: "0.72rem", fontWeight: 700 }}>
+            Por enviar / Guest cart
+          </p>
+          <div className="bg-card rounded-2xl border border-primary/30 overflow-hidden">
+            {cart.map((item, i) => (
+              <div
+                key={item.cartId}
+                className={`px-4 py-3 flex justify-between gap-2 ${i < cart.length - 1 ? "border-b border-border" : ""}`}
+              >
+                <BillLine item={item} guestName={guestName(item.orderedBy)} status="Carrito" />
+                <button
+                  type="button"
+                  onClick={() => onRemoveCart(item.cartId)}
+                  className="flex-shrink-0 self-center flex items-center gap-1 px-2 py-1.5 rounded-lg border border-red-200 text-red-500"
+                  style={{ fontSize: "0.65rem", fontWeight: 700 }}
+                >
+                  <Trash2 size={12} /> Quitar
+                </button>
               </div>
-            </div>
-            <span className="text-foreground flex-shrink-0" style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700, fontSize: "0.85rem" }}>
-              {formatCRC(item.totalPrice * item.quantity)}
+            ))}
+          </div>
+        </div>
+      )}
+
+      {sentOrders.length > 0 && (
+        <div className="bg-card rounded-2xl border border-border overflow-hidden">
+          {sentOrders.map((item, i) => {
+            const ticket = findKdsTicketForCartItem(kdsTickets, item.cartId)
+            const started = isItemKitchenStarted(kdsTickets, item.cartId)
+            const paid = isReceiptCyclePaid(item, sentOrders, cart, payments)
+            const awaiting = pendingIds.has(item.cartId)
+            const status = paid
+              ? "Pagado"
+              : awaiting
+                ? "Por aprobar"
+                : ticket?.status === "preparing"
+                  ? "Preparando"
+                  : ticket?.status === "ready"
+                    ? "Listo"
+                    : ticket?.status === "delivered"
+                      ? "Entregado"
+                      : ticket?.status === "pending"
+                        ? "En cola"
+                        : "Enviado"
+
+            return (
+              <div
+                key={item.cartId}
+                className={`px-4 py-3 ${i < sentOrders.length - 1 ? "border-b border-border" : ""}`}
+              >
+                <div className="flex justify-between gap-2">
+                  <BillLine
+                    item={item}
+                    guestName={guestName(item.orderedBy)}
+                    status={status}
+                    staff={item.source === "staff"}
+                  />
+                  <span
+                    className="text-foreground flex-shrink-0"
+                    style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700, fontSize: "0.85rem" }}
+                  >
+                    {formatCRC(item.totalPrice * item.quantity)}
+                  </span>
+                </div>
+                <div className="flex justify-end gap-1.5 mt-2">
+                  {paid ? (
+                    <span
+                      className="flex items-center gap-1 text-muted-foreground px-2 py-1"
+                      style={{ fontSize: "0.65rem", fontWeight: 600 }}
+                    >
+                      <Lock size={11} /> Requiere reembolso
+                    </span>
+                  ) : started ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCompTarget(item)
+                        setCompReason(COMP_REASONS[0])
+                      }}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-amber-200 text-amber-800 bg-amber-50"
+                      style={{ fontSize: "0.65rem", fontWeight: 700 }}
+                    >
+                      <Gift size={12} /> Cortesía / Comp
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => onVoid(item.cartId)}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-red-200 text-red-500"
+                      style={{ fontSize: "0.65rem", fontWeight: 700 }}
+                    >
+                      <Ban size={12} /> Anular / Void
+                    </button>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+          <div className="px-4 py-3 bg-muted border-t border-border flex justify-between">
+            <span className="text-foreground" style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700 }}>
+              Total
+            </span>
+            <span className="text-foreground" style={{ fontFamily: "Outfit, sans-serif", fontWeight: 800 }}>
+              {formatCRC(total)}
             </span>
           </div>
-        ))}
-        <div className="px-4 py-3 bg-muted border-t border-border flex justify-between">
-          <span className="text-foreground" style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700 }}>Total</span>
-          <span className="text-foreground" style={{ fontFamily: "Outfit, sans-serif", fontWeight: 800 }}>{formatCRC(total)}</span>
         </div>
+      )}
+
+      {comps.length > 0 && (
+        <div>
+          <p className="text-muted-foreground mb-2" style={{ fontSize: "0.72rem", fontWeight: 700 }}>
+            Cortesías / Comps — no se cobran
+          </p>
+          <div className="bg-card rounded-2xl border border-amber-200 overflow-hidden">
+            {comps.map((c, i) => (
+              <div key={c.id} className={`px-4 py-3 ${i < comps.length - 1 ? "border-b border-border" : ""}`}>
+                <div className="flex justify-between gap-2">
+                  <div>
+                    <p className="text-foreground" style={{ fontSize: "0.85rem", fontWeight: 600 }}>
+                      {c.quantity > 1 ? `${c.quantity}× ` : ""}
+                      {c.name}
+                    </p>
+                    <p className="text-amber-800 mt-0.5" style={{ fontSize: "0.68rem" }}>
+                      {c.reason} · {guestName(c.orderedBy)}
+                    </p>
+                  </div>
+                  <span className="text-muted-foreground line-through" style={{ fontSize: "0.8rem", fontWeight: 600 }}>
+                    {formatCRC(c.unitPrice * c.quantity)}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {compTarget && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center" style={{ background: "rgba(28,25,23,0.4)" }}>
+          <div className="w-full max-w-[430px] bg-card rounded-t-3xl px-5 pt-4 pb-6">
+            <div className="flex justify-center mb-3">
+              <div className="w-10 h-1 bg-border rounded-full" />
+            </div>
+            <h3
+              className="text-foreground mb-1"
+              style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700, fontSize: "1.05rem" }}
+            >
+              Cortesía / Comp
+            </h3>
+            <p className="text-muted-foreground mb-4" style={{ fontSize: "0.78rem" }}>
+              {compTarget.name} sale de la cuenta. La cocina sigue el ticket — la casa asume el costo.
+            </p>
+            <div className="flex flex-col gap-2 mb-4">
+              {COMP_REASONS.map((reason) => (
+                <button
+                  key={reason}
+                  type="button"
+                  onClick={() => setCompReason(reason)}
+                  className={`text-left px-4 py-2.5 rounded-xl border ${
+                    compReason === reason ? "border-primary bg-primary/5 text-foreground" : "border-border text-muted-foreground"
+                  }`}
+                  style={{ fontSize: "0.82rem", fontWeight: 600 }}
+                >
+                  {reason}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setCompTarget(null)}
+                className="flex-1 py-3 rounded-xl bg-muted text-foreground"
+                style={{ fontSize: "0.85rem", fontWeight: 700 }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onComp(compTarget.cartId, compReason)
+                  setCompTarget(null)
+                }}
+                className="flex-1 py-3 rounded-xl text-white"
+                style={{ fontSize: "0.85rem", fontWeight: 700, background: "#6366F1" }}
+              >
+                Aplicar cortesía
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function BillLine({
+  item,
+  guestName,
+  status,
+  staff,
+}: {
+  item: CartItem
+  guestName: string
+  status: string
+  staff?: boolean
+}) {
+  return (
+    <div className="min-w-0">
+      <p className="text-foreground" style={{ fontSize: "0.85rem", fontWeight: 600 }}>
+        {item.quantity > 1 ? `${item.quantity}× ` : ""}
+        {item.name}
+      </p>
+      {item.modifiers.length > 0 && (
+        <p className="text-muted-foreground" style={{ fontSize: "0.68rem" }}>
+          {item.modifiers.join(" · ")}
+        </p>
+      )}
+      <div className="flex flex-wrap gap-1 mt-0.5">
+        <span className="bg-muted text-muted-foreground px-1.5 rounded" style={{ fontSize: "0.65rem" }}>
+          {status}
+        </span>
+        <span className="bg-primary/10 text-primary px-1.5 rounded" style={{ fontSize: "0.65rem", fontWeight: 600 }}>
+          {guestName}
+        </span>
+        {staff && (
+          <span className="bg-muted text-muted-foreground px-1.5 rounded" style={{ fontSize: "0.65rem" }}>
+            Mesero
+          </span>
+        )}
       </div>
     </div>
   )
 }
 
-function ManualOrderTab({ tableNumber }: { tableNumber: number }) {
+interface DraftLine {
+  draftId: string
+  menuItemId: string
+  name: string
+  basePrice: number
+  totalPrice: number
+  quantity: number
+  modifiers: string[]
+}
+
+function ManualOrderTab({
+  tableId,
+  tableNumber,
+  restaurant,
+  guests,
+  onSent,
+  staffSendToKitchen,
+}: {
+  tableId: string
+  tableNumber: number
+  restaurant: Restaurant
+  guests: TableGuest[]
+  onSent: () => void
+  staffSendToKitchen: ReturnType<typeof useGuest>["staffSendToKitchen"]
+}) {
   const [note, setNote] = useState("")
-  const [sent, setSent] = useState(false)
+  const [draft, setDraft] = useState<DraftLine[]>([])
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [modifierItem, setModifierItem] = useState<MenuItem | null>(null)
+  const [orderedBy, setOrderedBy] = useState(staffGuestId(tableId))
+  const guestChoices = guests.filter((g) => !g.guestId.startsWith("staff-"))
+  const draftTotal = draft.reduce((s, i) => s + i.totalPrice * i.quantity, 0)
+
+  const handleConfirm = (item: MenuItem, qty: number, modifiers: string[], unitPrice: number) => {
+    setDraft((prev) => [
+      ...prev,
+      {
+        draftId: `${item.id}-${Date.now()}`,
+        menuItemId: item.id,
+        name: item.name,
+        basePrice: item.price,
+        totalPrice: unitPrice,
+        quantity: qty,
+        modifiers,
+      },
+    ])
+    setModifierItem(null)
+  }
+
+  const send = () => {
+    const result = staffSendToKitchen(
+      tableId,
+      draft.map((d) => ({
+        menuItemId: d.menuItemId,
+        name: d.name,
+        basePrice: d.basePrice,
+        totalPrice: d.totalPrice,
+        quantity: d.quantity,
+        modifiers: d.modifiers,
+      })),
+      { notes: note, orderedBy }
+    )
+    if (result.ok) {
+      setDraft([])
+      setNote("")
+      onSent()
+    }
+  }
 
   return (
     <div>
       <p className="text-muted-foreground mb-4" style={{ fontSize: "0.82rem" }}>
-        Ingresa un pedido manualmente para Mesa #{tableNumber} / Manual order entry
+        Ingresa un pedido del menú para Mesa #{tableNumber} / Manual order entry
       </p>
-      <button className="w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl border border-border bg-card text-foreground mb-3" style={{ fontWeight: 600, fontSize: "0.88rem" }}>
+
+      {guestChoices.length > 0 && (
+        <label className="block mb-3">
+          <span className="text-muted-foreground" style={{ fontSize: "0.72rem", fontWeight: 600 }}>
+            Atribuir a / Assign to
+          </span>
+          <select
+            value={orderedBy}
+            onChange={(e) => setOrderedBy(e.target.value)}
+            className="mt-1 w-full bg-card border border-border rounded-xl px-3 py-2.5 text-foreground"
+            style={{ fontSize: "0.85rem" }}
+          >
+            <option value={staffGuestId(tableId)}>Mesero / Staff</option>
+            {guestChoices.map((g) => (
+              <option key={g.guestId} value={g.guestId}>
+                {g.displayName}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+
+      <button
+        type="button"
+        onClick={() => setPickerOpen(true)}
+        className="w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl border border-border bg-card text-foreground mb-3"
+        style={{ fontWeight: 600, fontSize: "0.88rem" }}
+      >
         <Plus size={18} />
         Agregar artículo del menú / Add Menu Item
       </button>
+
+      {draft.length > 0 && (
+        <div className="bg-card rounded-2xl border border-border overflow-hidden mb-3">
+          {draft.map((line) => (
+            <div
+              key={line.draftId}
+              className="px-4 py-3 flex items-start justify-between gap-2 border-b border-border last:border-b-0"
+            >
+              <div className="min-w-0">
+                <p className="text-foreground" style={{ fontSize: "0.85rem", fontWeight: 600 }}>
+                  {line.quantity}× {line.name}
+                </p>
+                {line.modifiers.length > 0 && (
+                  <p className="text-muted-foreground" style={{ fontSize: "0.68rem" }}>
+                    {line.modifiers.join(" · ")}
+                  </p>
+                )}
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <span style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700, fontSize: "0.82rem" }}>
+                  {formatCRC(line.totalPrice * line.quantity)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setDraft((p) => p.filter((d) => d.draftId !== line.draftId))}
+                  className="w-8 h-8 flex items-center justify-center rounded-lg bg-muted"
+                  aria-label="Quitar"
+                >
+                  <Minus size={14} />
+                </button>
+              </div>
+            </div>
+          ))}
+          <div className="px-4 py-2.5 bg-muted flex justify-between">
+            <span style={{ fontSize: "0.78rem", fontWeight: 700 }}>Subtotal</span>
+            <span style={{ fontFamily: "Outfit, sans-serif", fontWeight: 800 }}>{formatCRC(draftTotal)}</span>
+          </div>
+        </div>
+      )}
+
       <textarea
         value={note}
         onChange={(e) => setNote(e.target.value)}
@@ -275,16 +791,31 @@ function ManualOrderTab({ tableNumber }: { tableNumber: number }) {
         className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:border-[#6366F1] transition-colors mb-3"
         style={{ fontSize: "0.85rem", minHeight: "80px" }}
       />
-      {sent ? (
-        <div className="flex items-center justify-center gap-2 py-3 rounded-2xl bg-green-50 text-status-green border border-green-200">
-          <CheckCircle2 size={18} />
-          <span style={{ fontSize: "0.85rem", fontWeight: 700 }}>Enviado a cocina / Sent to Kitchen</span>
-        </div>
-      ) : (
-        <button onClick={() => setSent(true)} className="w-full py-3.5 rounded-2xl text-white" style={{ background: "#6366F1", fontWeight: 700, fontSize: "0.9rem" }}>
-          <ChefHat size={16} className="inline mr-2" />
-          Enviar a Cocina / Send to Kitchen
-        </button>
+
+      <button
+        type="button"
+        disabled={draft.length === 0}
+        onClick={send}
+        className="w-full py-3.5 rounded-2xl text-white disabled:opacity-40"
+        style={{ background: "#6366F1", fontWeight: 700, fontSize: "0.9rem" }}
+      >
+        <ChefHat size={16} className="inline mr-2" />
+        Enviar a Cocina / Send to Kitchen
+      </button>
+
+      {pickerOpen && (
+        <StaffMenuPicker
+          restaurant={restaurant}
+          tableNumber={tableNumber}
+          onClose={() => setPickerOpen(false)}
+          onAddItem={(item) => {
+            setPickerOpen(false)
+            setModifierItem(item)
+          }}
+        />
+      )}
+      {modifierItem && (
+        <ModifierModal item={modifierItem} onClose={() => setModifierItem(null)} onConfirm={handleConfirm} />
       )}
     </div>
   )

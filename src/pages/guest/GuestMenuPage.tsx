@@ -57,7 +57,7 @@ export default function GuestMenuPage() {
             payments={g.payments}
             openReceiptCycle={g.receiptCycle}
             tableId={g.tableId}
-            onCancelOrder={g.cancelSentOrder}
+            onCancelItem={g.cancelSentItem}
             kdsTickets={g.kdsTickets}
             onBack={() => setView("menu")}
             onOpenCart={() => {

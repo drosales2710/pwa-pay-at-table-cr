@@ -14,7 +14,7 @@ export default function GuestOrderSummaryPage() {
         payments={g.payments}
         openReceiptCycle={g.receiptCycle}
         tableId={g.tableId}
-        onCancelOrder={g.cancelSentOrder}
+        onCancelItem={g.cancelSentItem}
         kdsTickets={g.kdsTickets}
         onBack={() => navigate("/menu")}
         onRequestBill={() => navigate("/checkout")}

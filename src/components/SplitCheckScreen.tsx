@@ -1,10 +1,10 @@
 import { useState, useEffect, useMemo } from "react"
-import { ChevronLeft, Users, UserCheck, DollarSign, Minus, Plus, CreditCard } from "lucide-react"
+import { ChevronLeft, Users, UserCheck, CreditCard, Minus, Plus } from "lucide-react"
 import type { CartItem, SplitMethod } from "../types"
 import { formatCRC, formatUSD } from "../utils/format"
 import { useGuest } from "../context/GuestContext"
 import { sumItems, getGuestEqualShare } from "../utils/split"
-import { groupByReceiptCycle } from "../utils/billing"
+import { groupByReceiptCycle, buildItemSettlementMap, sumDueForUnitSelections, countSelectedUnits, type ItemUnitSelection } from "../utils/billing"
 import {
   DEV_SIMULATED_GUEST_COUNT,
   getEffectiveGuestCount,
@@ -12,10 +12,18 @@ import {
   setDevSimulateMultiGuest,
 } from "../utils/devFlags"
 
+/** Custom split hidden until partial-pay rules are finalized with stakeholders. */
+const GUEST_CUSTOM_SPLIT_ENABLED = false
+
 interface SplitCheckScreenProps {
   allItems: CartItem[]
   onBack: () => void
-  onContinue: (method: SplitMethod, amount: number, partySize: number) => void
+  onContinue: (
+    method: SplitMethod,
+    amount: number,
+    partySize: number,
+    unitSelections?: ItemUnitSelection[]
+  ) => void
 }
 
 export default function SplitCheckScreen({
@@ -23,7 +31,12 @@ export default function SplitCheckScreen({
   onBack,
   onContinue,
 }: SplitCheckScreenProps) {
-  const { guestIndex, guests, tableBalance, splitSnapshot, payments } = useGuest()
+  const { guestIndex, guests, tableBalance, payments, sentOrders, cart } = useGuest()
+
+  const settlement = useMemo(
+    () => buildItemSettlementMap(sentOrders, cart, payments),
+    [sentOrders, cart, payments]
+  )
 
   const cycleGroups = useMemo(() => {
     const sent = allItems.filter((i) => i.status === "sent")
@@ -32,20 +45,8 @@ export default function SplitCheckScreen({
   }, [allItems, payments])
 
   const scannedGuestCount = guests.length
-
   const billTotal = sumItems(allItems)
   const amountDue = tableBalance.remaining
-
-  const splitBase = splitSnapshot
-    ? Math.max(0, splitSnapshot.lockedSubtotal - tableBalance.paidTotal)
-    : amountDue
-
-  const effectiveGuestCount = getEffectiveGuestCount(scannedGuestCount)
-  const canUseMultiGuestPayment = effectiveGuestCount >= 2
-  const minPartySize = 2
-  const maxPartySize = effectiveGuestCount
-  const multiGuestRequiredHint =
-    "Requiere 2+ comensales con QR escaneado / Needs 2+ guests at table"
 
   const [method, setMethod] = useState<SplitMethod>("full")
   const [partySize, setPartySize] = useState(() =>
@@ -54,9 +55,18 @@ export default function SplitCheckScreen({
       Math.max(getEffectiveGuestCount(scannedGuestCount), 2)
     )
   )
-  const [selectedItems, setSelectedItems] = useState<string[]>([])
-  const [customAmount, setCustomAmount] = useState("")
+  const [unitSelections, setUnitSelections] = useState<Record<string, number>>({})
   const [simulateMultiGuest, setSimulateMultiGuest] = useState(() => isDevSimulateMultiGuest())
+
+  const effectiveGuestCount = getEffectiveGuestCount(scannedGuestCount)
+  const canUseMultiGuestPayment = import.meta.env.DEV
+    ? simulateMultiGuest
+    : scannedGuestCount >= 2
+  const minPartySize = 2
+  const maxPartySize = effectiveGuestCount
+  const multiGuestRequiredHint = import.meta.env.DEV
+    ? "Activa el simulador de demo arriba / Enable demo simulator above"
+    : "Requiere 2+ comensales con QR escaneado / Needs 2+ guests at table"
 
   useEffect(() => {
     if (!canUseMultiGuestPayment && method !== "full") {
@@ -81,23 +91,25 @@ export default function SplitCheckScreen({
   const selectMethod = (next: SplitMethod) => {
     setMethod(next)
     if (next === "myItems") {
-      setSelectedItems([])
+      setUnitSelections({})
     }
   }
 
-  const equalShare = getGuestEqualShare(splitBase, partySize, guestIndex)
+  const selectionsList = useMemo(
+    (): ItemUnitSelection[] =>
+      Object.entries(unitSelections)
+        .filter(([, units]) => units > 0)
+        .map(([cartId, units]) => ({ cartId, units })),
+    [unitSelections]
+  )
+
+  const equalShare = Math.min(getGuestEqualShare(amountDue, partySize, guestIndex), amountDue)
 
   const getPayAmount = (): number => {
     if (method === "full") return amountDue
     if (method === "equal") return equalShare
     if (method === "myItems") {
-      return allItems
-        .filter((i) => selectedItems.includes(i.cartId))
-        .reduce((s, i) => s + i.totalPrice * i.quantity, 0)
-    }
-    if (method === "custom") {
-      const v = parseInt(customAmount.replace(/\D/g, ""), 10)
-      return isNaN(v) ? 0 : Math.min(v, amountDue)
+      return Math.min(sumDueForUnitSelections(settlement, allItems, selectionsList), amountDue)
     }
     return amountDue
   }
@@ -105,11 +117,33 @@ export default function SplitCheckScreen({
   const payAmount = getPayAmount()
   const remainingAfterPay = Math.max(0, amountDue - payAmount)
 
-  const toggleItem = (cartId: string) => {
-    setSelectedItems((p) =>
-      p.includes(cartId) ? p.filter((id) => id !== cartId) : [...p, cartId]
-    )
+  const getLineSettlement = (item: CartItem) => settlement.get(item.cartId)
+
+  const setItemUnits = (cartId: string, units: number) => {
+    setUnitSelections((prev) => {
+      const next = { ...prev }
+      if (units <= 0) delete next[cartId]
+      else next[cartId] = units
+      return next
+    })
   }
+
+  const toggleSingleUnit = (item: CartItem) => {
+    const line = getLineSettlement(item)
+    if (!line || line.remainingUnits <= 0) return
+    const current = unitSelections[item.cartId] ?? 0
+    setItemUnits(item.cartId, current > 0 ? 0 : 1)
+  }
+
+  const adjustUnits = (item: CartItem, delta: number) => {
+    const line = getLineSettlement(item)
+    if (!line) return
+    const max = line.remainingUnits
+    const current = unitSelections[item.cartId] ?? 0
+    setItemUnits(item.cartId, Math.min(max, Math.max(0, current + delta)))
+  }
+
+  const selectedUnitCount = countSelectedUnits(selectionsList)
 
   const canContinue =
     payAmount > 0 &&
@@ -117,12 +151,10 @@ export default function SplitCheckScreen({
     (method === "full" ||
       (canUseMultiGuestPayment &&
         ((method === "equal" && partySize >= minPartySize) ||
-          (method === "myItems" && selectedItems.length > 0) ||
-          (method === "custom" && payAmount > 0))))
+          (method === "myItems" && selectedUnitCount > 0))))
 
   return (
     <div className="flex flex-col h-full bg-background screen-fade">
-      {/* Header */}
       <header className="safe-top bg-card border-b border-border px-4 py-4 flex-shrink-0 relative z-30">
         <div className="flex items-center gap-3">
           <button
@@ -138,16 +170,18 @@ export default function SplitCheckScreen({
               className="text-foreground"
               style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700, fontSize: "1.15rem" }}
             >
-              Dividir la cuenta <span className="text-muted-foreground" style={{ fontWeight: 400, fontSize: "0.75rem" }}>/ Split Bill</span>
+              Dividir la cuenta{" "}
+              <span className="text-muted-foreground" style={{ fontWeight: 400, fontSize: "0.75rem" }}>
+                / Split Bill
+              </span>
             </h1>
             <p className="text-muted-foreground" style={{ fontSize: "0.75rem" }}>
-              {tableBalance.paidTotal > 0 ? (
-                <>
-                  Restante {formatCRC(amountDue)} de {formatCRC(billTotal)}
-                  <span> · {tableBalance.paidGuestCount} pagaron</span>
-                </>
-              ) : (
-                <>Total {formatCRC(billTotal)}</>
+              Saldo pendiente {formatCRC(amountDue)}
+              {tableBalance.paidTotal > 0 && (
+                <span>
+                  {" "}
+                  · {tableBalance.paidGuestCount} pagaron
+                </span>
               )}
             </p>
           </div>
@@ -160,22 +194,13 @@ export default function SplitCheckScreen({
             Pagado {formatCRC(tableBalance.paidTotal)} de {formatCRC(tableBalance.billTotal)}
           </p>
           <p className="text-muted-foreground" style={{ fontSize: "0.72rem" }}>
-            Restante: {formatCRC(tableBalance.remaining)} · {tableBalance.paidGuestCount} of {tableBalance.activeGuestCount} guests paid
+            Solo puedes pagar hasta el saldo pendiente ({formatCRC(amountDue)}). No se permiten pagos
+            mayores ni reembolsos.
           </p>
         </div>
       )}
 
-      {splitSnapshot && (
-        <div className="mx-4 mt-3 bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5">
-          <p className="text-foreground" style={{ fontSize: "0.72rem", fontWeight: 600 }}>
-            División bloqueada en {formatCRC(splitSnapshot.lockedSubtotal)} — nuevos pedidos se cobran aparte
-          </p>
-        </div>
-      )}
-
-      {/* Content */}
       <div className="flex-1 overflow-y-auto pb-36 px-4">
-        {/* Itemized bill */}
         <div className="mt-5">
           <p className="text-muted-foreground mb-2" style={{ fontSize: "0.8rem", fontWeight: 600 }}>
             DETALLE DE CONSUMO
@@ -187,88 +212,187 @@ export default function SplitCheckScreen({
                 ...group.cartItems,
               ]
               return (
-              <div key={group.receiptCycle}>
-                {cycleGroups.length > 1 && (
-                  <div className={`px-4 py-2 bg-muted/50 border-b border-border ${groupIdx > 0 ? "border-t" : ""}`}>
-                    <p className="text-muted-foreground" style={{ fontSize: "0.72rem", fontWeight: 700 }}>
-                      Cuenta · Ronda {group.receiptCycle}
-                    </p>
-                  </div>
-                )}
-                {cycleItems.map((item, idx) => (
-              <div
-                key={item.cartId}
-                className={`px-4 py-3.5 flex items-center justify-between gap-3 ${
-                  idx < cycleItems.length - 1 ? "border-b border-border" : ""
-                } ${method === "myItems" ? "cursor-pointer active:bg-muted transition-colors" : ""}`}
-                onClick={() => method === "myItems" && toggleItem(item.cartId)}
-              >
-                <div className="flex items-center gap-3 flex-1 min-w-0">
-                  {method === "myItems" && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        toggleItem(item.cartId)
-                      }}
-                      className={`w-5 h-5 rounded-md border-2 flex items-center justify-center flex-shrink-0 transition-all ${
-                        selectedItems.includes(item.cartId)
-                          ? "border-primary bg-primary"
-                          : "border-border bg-background"
-                      }`}
+                <div key={group.receiptCycle}>
+                  {cycleGroups.length > 1 && (
+                    <div
+                      className={`px-4 py-2 bg-muted/50 border-b border-border ${groupIdx > 0 ? "border-t" : ""}`}
                     >
-                      {selectedItems.includes(item.cartId) && (
-                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                          <path d="M2 6l3 3 5-5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                      )}
-                    </button>
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <p className="text-foreground" style={{ fontSize: "0.88rem", fontWeight: 600 }}>
-                      {item.quantity > 1 ? `${item.quantity}× ` : ""}{item.name}
-                    </p>
-                    {item.modifiers.length > 0 && (
-                      <p className="text-muted-foreground truncate" style={{ fontSize: "0.72rem" }}>
-                        {item.modifiers.join(" · ")}
+                      <p className="text-muted-foreground" style={{ fontSize: "0.72rem", fontWeight: 700 }}>
+                        Envío · Ronda {group.receiptCycle}
                       </p>
-                    )}
-                  </div>
+                    </div>
+                  )}
+                  {cycleItems.map((item, idx) => {
+                    const line = getLineSettlement(item)
+                    const remaining = line?.remainingDue ?? item.totalPrice * item.quantity
+                    const lineTotal = line?.lineTotal ?? item.totalPrice * item.quantity
+                    const remainingUnits = line?.remainingUnits ?? item.quantity
+                    const isPaid = remaining <= 0
+                    const isMyItems = method === "myItems" && !isPaid
+                    const selectedUnits = unitSelections[item.cartId] ?? 0
+                    const showStepper = isMyItems && item.quantity > 1 && remainingUnits > 0
+                    const showCheckbox = isMyItems && !showStepper
+
+                    return (
+                      <div
+                        key={item.cartId}
+                        className={`px-4 py-3.5 flex items-center justify-between gap-3 ${
+                          idx < cycleItems.length - 1 ? "border-b border-border" : ""
+                        } ${showCheckbox ? "cursor-pointer active:bg-muted transition-colors" : ""} ${
+                          isPaid ? "opacity-50" : ""
+                        }`}
+                        onClick={() => showCheckbox && toggleSingleUnit(item)}
+                      >
+                        <div className="flex items-center gap-3 flex-1 min-w-0">
+                          {showCheckbox && (
+                            <button
+                              type="button"
+                              disabled={isPaid}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                toggleSingleUnit(item)
+                              }}
+                              className={`w-5 h-5 rounded-md border-2 flex items-center justify-center flex-shrink-0 transition-all ${
+                                selectedUnits > 0
+                                  ? "border-primary bg-primary"
+                                  : "border-border bg-background"
+                              }`}
+                            >
+                              {selectedUnits > 0 && (
+                                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                                  <path
+                                    d="M2 6l3 3 5-5"
+                                    stroke="white"
+                                    strokeWidth="2"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                  />
+                                </svg>
+                              )}
+                            </button>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <p
+                              className="text-foreground"
+                              style={{ fontSize: "0.88rem", fontWeight: 600 }}
+                            >
+                              {item.quantity > 1 ? `${item.quantity}× ` : ""}
+                              {item.name}
+                            </p>
+                            {item.modifiers.length > 0 && (
+                              <p className="text-muted-foreground truncate" style={{ fontSize: "0.72rem" }}>
+                                {item.modifiers.join(" · ")}
+                              </p>
+                            )}
+                            {isPaid && (
+                              <p className="text-status-green mt-0.5" style={{ fontSize: "0.65rem", fontWeight: 600 }}>
+                                Pagado
+                              </p>
+                            )}
+                            {showStepper && (
+                              <div className="flex items-center gap-2 mt-2">
+                                <button
+                                  type="button"
+                                  onClick={() => adjustUnits(item, -1)}
+                                  disabled={selectedUnits <= 0}
+                                  className="w-8 h-8 flex items-center justify-center bg-muted rounded-lg active:scale-95 transition-transform disabled:opacity-40"
+                                >
+                                  <Minus size={14} className="text-foreground" />
+                                </button>
+                                <span
+                                  className="text-foreground min-w-[4.5rem] text-center"
+                                  style={{ fontSize: "0.78rem", fontWeight: 600 }}
+                                >
+                                  {selectedUnits} de {remainingUnits}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => adjustUnits(item, 1)}
+                                  disabled={selectedUnits >= remainingUnits}
+                                  className="w-8 h-8 flex items-center justify-center bg-muted rounded-lg active:scale-95 transition-transform disabled:opacity-40"
+                                >
+                                  <Plus size={14} className="text-foreground" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-right flex-shrink-0">
+                          {selectedUnits > 0 && line && (
+                            <span
+                              className="text-primary block mb-0.5"
+                              style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700, fontSize: "0.82rem" }}
+                            >
+                              {formatCRC(Math.min(selectedUnits * line.unitPrice, line.remainingDue))}
+                            </span>
+                          )}
+                          {remaining < lineTotal ? (
+                            <>
+                              <span
+                                className="text-muted-foreground line-through block"
+                                style={{ fontSize: "0.72rem" }}
+                              >
+                                {formatCRC(lineTotal)}
+                              </span>
+                              <span
+                                className="text-foreground"
+                                style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700, fontSize: "0.88rem" }}
+                              >
+                                {formatCRC(remaining)}
+                              </span>
+                            </>
+                          ) : (
+                            <span
+                              className="text-foreground"
+                              style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700, fontSize: "0.88rem" }}
+                            >
+                              {formatCRC(lineTotal)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
                 </div>
-                <span
-                  className="text-foreground flex-shrink-0"
-                  style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700, fontSize: "0.88rem" }}
-                >
-                  {formatCRC(item.totalPrice * item.quantity)}
-                </span>
-              </div>
-                ))}
-              </div>
               )
             })}
             <div className="px-4 py-3 bg-muted border-t border-border">
               <div className="flex justify-between mb-1">
-                <span className="text-foreground" style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700, fontSize: "0.9rem" }}>
-                  Total cuenta
+                <span
+                  className="text-foreground"
+                  style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700, fontSize: "0.9rem" }}
+                >
+                  Consumo abierto
                 </span>
-                <span className="text-foreground" style={{ fontFamily: "Outfit, sans-serif", fontWeight: 800, fontSize: "1rem" }}>
+                <span
+                  className="text-foreground"
+                  style={{ fontFamily: "Outfit, sans-serif", fontWeight: 800, fontSize: "1rem" }}
+                >
                   {formatCRC(billTotal)}
                 </span>
               </div>
               {tableBalance.paidTotal > 0 && (
                 <div className="flex justify-between mb-1">
-                  <span className="text-muted-foreground" style={{ fontSize: "0.78rem" }}>Ya pagado</span>
+                  <span className="text-muted-foreground" style={{ fontSize: "0.78rem" }}>
+                    Ya pagado
+                  </span>
                   <span className="text-muted-foreground" style={{ fontSize: "0.78rem", fontWeight: 600 }}>
                     − {formatCRC(tableBalance.paidTotal)}
                   </span>
                 </div>
               )}
               <div className="flex justify-between pt-1 border-t border-border/60">
-                <span className="text-primary" style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700, fontSize: "0.9rem" }}>
-                  Por pagar
+                <span
+                  className="text-primary"
+                  style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700, fontSize: "0.9rem" }}
+                >
+                  Saldo pendiente
                 </span>
                 <div className="text-right">
-                  <span className="text-primary block" style={{ fontFamily: "Outfit, sans-serif", fontWeight: 800, fontSize: "1rem" }}>
+                  <span
+                    className="text-primary block"
+                    style={{ fontFamily: "Outfit, sans-serif", fontWeight: 800, fontSize: "1rem" }}
+                  >
                     {formatCRC(amountDue)}
                   </span>
                   <span className="text-muted-foreground" style={{ fontSize: "0.7rem" }}>
@@ -280,7 +404,6 @@ export default function SplitCheckScreen({
           </div>
         </div>
 
-        {/* Split method selector */}
         <div className="mt-6">
           <p className="text-muted-foreground mb-3" style={{ fontSize: "0.8rem", fontWeight: 600 }}>
             MÉTODO DE PAGO
@@ -313,11 +436,6 @@ export default function SplitCheckScreen({
                   />
                 </button>
               </div>
-              {simulateMultiGuest && (
-                <p className="text-violet-800 mt-2" style={{ fontSize: "0.68rem", fontWeight: 600 }}>
-                  Opciones de división habilitadas para demo ({effectiveGuestCount} comensales simulados)
-                </p>
-              )}
             </div>
           )}
 
@@ -328,11 +446,7 @@ export default function SplitCheckScreen({
               icon={<CreditCard size={20} />}
               title="Pago Completo"
               titleEn="Full Payment"
-              description={
-                tableBalance.paidTotal > 0
-                  ? `Paga el saldo restante (${formatCRC(amountDue)})`
-                  : "Paga el total de la cuenta en una sola transacción"
-              }
+              description={`Paga el saldo pendiente (${formatCRC(amountDue)})`}
             />
             <SplitOption
               selected={method === "equal"}
@@ -343,7 +457,7 @@ export default function SplitCheckScreen({
               titleEn="Split Equally"
               description={
                 canUseMultiGuestPayment
-                  ? `${effectiveGuestCount} comensales en la mesa · elige entre 2 y ${maxPartySize}`
+                  ? `Divide ${formatCRC(amountDue)} entre ${partySize} personas`
                   : multiGuestRequiredHint
               }
             />
@@ -356,27 +470,24 @@ export default function SplitCheckScreen({
               titleEn="Pay My Items"
               description={
                 canUseMultiGuestPayment
-                  ? "Selecciona los artículos que deseas pagar"
+                  ? "Elige cuántos consumiste — solo se cobra lo pendiente"
                   : multiGuestRequiredHint
               }
             />
-            <SplitOption
-              selected={method === "custom"}
-              onClick={() => canUseMultiGuestPayment && selectMethod("custom")}
-              disabled={!canUseMultiGuestPayment}
-              icon={<DollarSign size={20} />}
-              title="Monto personalizado"
-              titleEn="Custom Amount"
-              description={
-                canUseMultiGuestPayment
-                  ? "Ingresa el monto exacto que deseas pagar"
-                  : multiGuestRequiredHint
-              }
-            />
+            {GUEST_CUSTOM_SPLIT_ENABLED && (
+              <SplitOption
+                selected={method === "custom"}
+                onClick={() => canUseMultiGuestPayment && selectMethod("custom")}
+                disabled={!canUseMultiGuestPayment}
+                icon={<CreditCard size={20} />}
+                title="Monto personalizado"
+                titleEn="Custom Amount"
+                description="Ingresa el monto exacto que deseas pagar"
+              />
+            )}
           </div>
         </div>
 
-        {/* Method-specific controls */}
         {method === "equal" && canUseMultiGuestPayment && (
           <div className="mt-4 bg-card rounded-2xl border border-border p-4">
             <p className="text-foreground mb-3" style={{ fontSize: "0.88rem", fontWeight: 600 }}>
@@ -412,7 +523,10 @@ export default function SplitCheckScreen({
                 <p className="text-muted-foreground" style={{ fontSize: "0.75rem" }}>
                   Tu parte exacta
                 </p>
-                <p className="text-primary" style={{ fontFamily: "Outfit, sans-serif", fontWeight: 800, fontSize: "1.2rem" }}>
+                <p
+                  className="text-primary"
+                  style={{ fontFamily: "Outfit, sans-serif", fontWeight: 800, fontSize: "1.2rem" }}
+                >
                   {formatCRC(equalShare)}
                 </p>
                 <p className="text-muted-foreground" style={{ fontSize: "0.7rem" }}>
@@ -431,65 +545,37 @@ export default function SplitCheckScreen({
         {method === "myItems" && canUseMultiGuestPayment && (
           <div className="mt-4 bg-primary/5 rounded-2xl border border-primary/20 p-4 flex justify-between items-center">
             <p className="text-foreground" style={{ fontSize: "0.88rem", fontWeight: 600 }}>
-              {selectedItems.length === 0 ? "Selecciona artículos arriba" : `${selectedItems.length} artículo(s)`}
+              {selectedUnitCount === 0
+                ? "Elige cuántos consumiste arriba"
+                : `${selectedUnitCount} unidad${selectedUnitCount === 1 ? "" : "es"}`}
             </p>
             <div className="text-right">
-              <p className="text-primary" style={{ fontFamily: "Outfit, sans-serif", fontWeight: 800, fontSize: "1.1rem" }}>
+              <p
+                className="text-primary"
+                style={{ fontFamily: "Outfit, sans-serif", fontWeight: 800, fontSize: "1.1rem" }}
+              >
                 {formatCRC(payAmount)}
               </p>
               {payAmount > 0 && (
                 <p className="text-muted-foreground" style={{ fontSize: "0.7rem" }}>
-                  Restante: {formatCRC(remainingAfterPay)}
+                  Restante mesa: {formatCRC(remainingAfterPay)}
                 </p>
               )}
             </div>
           </div>
         )}
-
-        {method === "custom" && canUseMultiGuestPayment && (
-          <div className="mt-4 bg-card rounded-2xl border border-border p-4">
-            <p className="text-foreground mb-3" style={{ fontSize: "0.88rem", fontWeight: 600 }}>
-              Monto a pagar (₡) · máx {formatCRC(amountDue)}
-            </p>
-            <div className="relative">
-              <span
-                className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground"
-                style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700, fontSize: "1.1rem" }}
-              >
-                ₡
-              </span>
-              <input
-                type="number"
-                inputMode="numeric"
-                value={customAmount}
-                onChange={(e) => setCustomAmount(e.target.value)}
-                placeholder="0"
-                max={amountDue}
-                className="w-full bg-muted border border-border rounded-xl pl-9 pr-4 py-3.5 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary transition-colors"
-                style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700, fontSize: "1.1rem" }}
-              />
-            </div>
-            {payAmount > 0 && (
-              <p className="text-muted-foreground mt-2" style={{ fontSize: "0.75rem" }}>
-                ≈ {formatUSD(payAmount)} · Restante en mesa: {formatCRC(remainingAfterPay)}
-              </p>
-            )}
-          </div>
-        )}
-
-        {method === "full" && tableBalance.paidTotal > 0 && (
-          <div className="mt-4 bg-muted/50 rounded-xl px-4 py-3">
-            <p className="text-muted-foreground" style={{ fontSize: "0.75rem" }}>
-              Pagarás el saldo restante de {formatCRC(amountDue)}
-            </p>
-          </div>
-        )}
       </div>
 
-      {/* Footer CTA */}
       <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] px-4 safe-bottom z-40 pointer-events-none">
         <button
-          onClick={() => onContinue(method, payAmount, partySize)}
+          onClick={() =>
+            onContinue(
+              method,
+              payAmount,
+              partySize,
+              method === "myItems" ? selectionsList : undefined
+            )
+          }
           disabled={!canContinue}
           className={`pointer-events-auto w-full rounded-2xl flex items-center justify-between px-5 shadow-lg transition-all active:scale-[0.98] ${
             canContinue ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
@@ -547,11 +633,16 @@ function SplitOption({ selected, onClick, disabled, icon, title, titleEn, descri
       </div>
       <div className="flex-1">
         <div className="flex items-baseline gap-1.5">
-          <p className="text-foreground" style={{ fontFamily: "Outfit, sans-serif", fontWeight: 600, fontSize: "0.92rem" }}>
+          <p
+            className="text-foreground"
+            style={{ fontFamily: "Outfit, sans-serif", fontWeight: 600, fontSize: "0.92rem" }}
+          >
             {title}
           </p>
           {titleEn && (
-            <span className="text-muted-foreground" style={{ fontSize: "0.68rem" }}>/ {titleEn}</span>
+            <span className="text-muted-foreground" style={{ fontSize: "0.68rem" }}>
+              / {titleEn}
+            </span>
           )}
         </div>
         <p className="text-muted-foreground mt-0.5" style={{ fontSize: "0.75rem" }}>
