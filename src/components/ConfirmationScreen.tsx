@@ -44,19 +44,16 @@ export default function ConfirmationScreen({
   const displayRating = hoverRating || rating
 
   return (
-    <div
-      className="flex flex-col min-h-full"
-      style={{ background: "#16A34A" }}
-    >
+    <div className="flex flex-col min-h-full bg-confirm-green">
       {/* Hero success area */}
       <div className="flex flex-col items-center pt-16 pb-10 px-6 safe-top">
         <div className="check-circle w-20 h-20 bg-white/20 rounded-full flex items-center justify-center mb-5">
           <div className="w-14 h-14 bg-white rounded-full flex items-center justify-center shadow-lg">
-            <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+            <svg width="32" height="32" viewBox="0 0 32 32" fill="none" className="text-confirm-green">
               <path
                 className="check-path"
                 d="M7 17l6 6 12-12"
-                stroke="#16A34A"
+                stroke="currentColor"
                 strokeWidth="3.5"
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -116,7 +113,7 @@ export default function ConfirmationScreen({
         {hasRemaining && (
           <button
             onClick={() => navigate("/checkout")}
-            className="w-full mb-5 flex items-center justify-center gap-2 py-3.5 rounded-2xl border-2 border-primary bg-primary/5 text-primary active:scale-[0.98] transition-transform"
+            className="w-full mb-5 flex items-center justify-center gap-2 py-3.5 rounded-2xl border-2 border-primary bg-primary/5 text-primary-on-light active:scale-[0.98] transition-transform"
             style={{ fontWeight: 700, fontSize: "0.88rem" }}
           >
             <Receipt size={18} />
@@ -124,14 +121,25 @@ export default function ConfirmationScreen({
           </button>
         )}
 
-        <button
-          onClick={() => navigate("/menu")}
-          className="w-full mb-5 flex items-center gap-2 py-2.5 text-muted-foreground active:opacity-70"
-          style={{ fontSize: "0.82rem", fontWeight: 600 }}
-        >
-          <ChevronLeft size={16} />
-          Volver al menú / Back to menu
-        </button>
+        {!hasRemaining ? (
+          <div className="mb-5 rounded-2xl border border-border bg-muted px-4 py-3 text-center">
+            <p className="text-foreground" style={{ fontSize: "0.82rem", fontWeight: 600 }}>
+              Cuenta pagada por completo · esta sesión ha finalizado.
+            </p>
+            <p className="text-muted-foreground mt-1" style={{ fontSize: "0.72rem" }}>
+              Full tab paid — scan the table QR to order again.
+            </p>
+          </div>
+        ) : (
+          <button
+            onClick={() => navigate("/menu")}
+            className="w-full mb-5 flex items-center gap-2 py-2.5 text-muted-foreground active:opacity-70"
+            style={{ fontSize: "0.82rem", fontWeight: 600 }}
+          >
+            <ChevronLeft size={16} />
+            Volver al menú / Back to menu
+          </button>
+        )}
         {/* Receipt */}
         <div className="mb-6">
           <div className="flex items-center gap-2 mb-3">
@@ -237,7 +245,7 @@ export default function ConfirmationScreen({
                   >
                     <Star
                       size={36}
-                      fill={displayRating >= star ? "#F59E0B" : "none"}
+                      fill={displayRating >= star ? "currentColor" : "none"}
                       className={displayRating >= star ? "text-status-yellow" : "text-border"}
                     />
                   </button>
@@ -290,7 +298,7 @@ export default function ConfirmationScreen({
                   <Star
                     key={s}
                     size={22}
-                    fill={s <= rating ? "#F59E0B" : "none"}
+                    fill={s <= rating ? "currentColor" : "none"}
                     className={s <= rating ? "text-status-yellow" : "text-border"}
                   />
                 ))}

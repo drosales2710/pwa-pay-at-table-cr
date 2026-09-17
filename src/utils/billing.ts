@@ -124,34 +124,76 @@ function sortItemsFifo(a: CartItem, b: CartItem): number {
   return a.cartId.localeCompare(b.cartId)
 }
 
-/** Apply cycle payments to items oldest-first (FIFO). Hidden from guest UI. */
+/** Apply cycle payments to items oldest-first (FIFO). Used for full/equal/custom payments. */
 export function allocateCycleItems(items: CartItem[], paidOnCycle: number): Map<string, ItemSettlement> {
-  const sorted = [...items].sort(sortItemsFifo)
-  let pool = Math.max(0, paidOnCycle)
-  const map = new Map<string, ItemSettlement>()
+  const map = initItemSettlements(items)
+  applyFifoPool(map, items, paidOnCycle)
+  return map
+}
 
-  for (const item of sorted) {
+function initItemSettlements(items: CartItem[]): Map<string, ItemSettlement> {
+  const map = new Map<string, ItemSettlement>()
+  for (const item of items) {
     const total = lineTotal(item)
-    const allocated = Math.min(pool, total)
-    pool -= allocated
-    const remainingDue = total - allocated
-    const unitPrice = item.totalPrice
-    const quantity = item.quantity
-    const remainingUnits =
-      remainingDue <= 0 ? 0 : Math.min(quantity, Math.floor(remainingDue / unitPrice))
     map.set(item.cartId, {
       cartId: item.cartId,
       lineTotal: total,
-      allocatedPaid: allocated,
-      remainingDue,
-      quantity,
-      unitPrice,
-      remainingUnits,
-      paidUnits: quantity - remainingUnits,
+      allocatedPaid: 0,
+      remainingDue: total,
+      quantity: item.quantity,
+      unitPrice: item.totalPrice,
+      remainingUnits: item.quantity,
+      paidUnits: 0,
     })
   }
-
   return map
+}
+
+function syncSettlementUnits(line: ItemSettlement): void {
+  line.remainingUnits =
+    line.remainingDue <= 0
+      ? 0
+      : Math.min(line.quantity, Math.floor(line.remainingDue / line.unitPrice))
+  line.paidUnits = line.quantity - line.remainingUnits
+}
+
+function applyAllocation(map: Map<string, ItemSettlement>, cartId: string, amount: number): void {
+  const line = map.get(cartId)
+  if (!line || amount <= 0) return
+  const allocated = Math.min(amount, line.remainingDue)
+  line.allocatedPaid += allocated
+  line.remainingDue -= allocated
+  syncSettlementUnits(line)
+}
+
+function applyExplicitUnitSelections(
+  map: Map<string, ItemSettlement>,
+  items: CartItem[],
+  selections: ItemUnitSelection[]
+): void {
+  const itemMap = new Map(items.map((i) => [i.cartId, i]))
+  for (const sel of selections) {
+    if (sel.units <= 0) continue
+    const line = map.get(sel.cartId)
+    const item = itemMap.get(sel.cartId)
+    if (!line || !item || line.remainingDue <= 0) continue
+    const units = Math.min(sel.units, line.remainingUnits)
+    if (units <= 0) continue
+    applyAllocation(map, sel.cartId, Math.min(units * line.unitPrice, line.remainingDue))
+  }
+}
+
+function applyFifoPool(map: Map<string, ItemSettlement>, items: CartItem[], pool: number): void {
+  let remaining = Math.max(0, pool)
+  const sorted = [...items].sort(sortItemsFifo)
+  for (const item of sorted) {
+    if (remaining <= 0) break
+    const line = map.get(item.cartId)
+    if (!line || line.remainingDue <= 0) continue
+    const allocated = Math.min(remaining, line.remainingDue)
+    applyAllocation(map, item.cartId, allocated)
+    remaining -= allocated
+  }
 }
 
 export function buildItemSettlementMap(
@@ -164,8 +206,21 @@ export function buildItemSettlementMap(
 
   for (const cycle of getActiveReceiptCycles(sentOrders, cart)) {
     const cycleItems = all.filter((i) => i.receiptCycle === cycle)
-    const paid = getPaidForCycle(payments, cycle)
-    allocateCycleItems(cycleItems, paid).forEach((v, k) => result.set(k, v))
+    const cyclePayments = payments.filter((p) => p.receiptCycle === cycle)
+    const map = initItemSettlements(cycleItems)
+
+    for (const payment of cyclePayments) {
+      if (payment.itemSelections?.length) {
+        applyExplicitUnitSelections(map, cycleItems, payment.itemSelections)
+      }
+    }
+
+    const fifoPool = cyclePayments
+      .filter((p) => !p.itemSelections?.length)
+      .reduce((sum, p) => sum + p.amount, 0)
+    applyFifoPool(map, cycleItems, fifoPool)
+
+    map.forEach((v, k) => result.set(k, v))
   }
 
   return result

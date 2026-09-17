@@ -69,6 +69,7 @@
   --color-primary-hover:      #EA6C0A;
   --color-primary-light:      #FFF7ED;
   --color-primary-foreground: #FFFFFF;
+  --color-primary-on-light:   #F97316;
 
   /* Neutral surface scale */
   --color-background:         #FAFAF7;   /* page canvas              */
@@ -90,6 +91,10 @@
   --color-border:             #E8DDD5;
   --color-accent:             #F97316;
   --color-accent-foreground:  #FFFFFF;
+
+  /* Guest phone preview chrome (dev/demo frame around the mobile viewport) */
+  --color-phone-frame:        #E5E0DA;
+  --color-primary-rgb:        249, 115, 22;
 
 
   /* ═══════════════════════════════════════════════════════════════

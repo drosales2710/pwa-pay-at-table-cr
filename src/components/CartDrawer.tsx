@@ -1,7 +1,8 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { X, Minus, Plus, Trash2, ChefHat } from "lucide-react"
-import type { CartItem } from "../types"
+import type { CartItem, PaymentRecord } from "../types"
 import { formatCRC, formatUSD } from "../utils/format"
+import { buildItemSettlementMap } from "../utils/billing"
 
 interface CartDrawerProps {
   cart: CartItem[]
@@ -12,6 +13,8 @@ interface CartDrawerProps {
   onSendToKitchen: () => void
   onRequestBill: () => void
   sentOrders: CartItem[]
+  payments: PaymentRecord[]
+  exchangeRate?: number
 }
 
 export default function CartDrawer({
@@ -23,6 +26,8 @@ export default function CartDrawer({
   onSendToKitchen,
   onRequestBill,
   sentOrders,
+  payments,
+  exchangeRate,
 }: CartDrawerProps) {
   const [visible, setVisible] = useState(false)
 
@@ -34,10 +39,26 @@ export default function CartDrawer({
     }
   }, [open])
 
+  const settlement = useMemo(
+    () => buildItemSettlementMap(sentOrders, cart, payments),
+    [sentOrders, cart, payments]
+  )
+
+  const lineRemaining = (item: CartItem) =>
+    settlement.get(item.cartId)?.remainingDue ?? item.totalPrice * item.quantity
+
+  const lineTotal = (item: CartItem) =>
+    settlement.get(item.cartId)?.lineTotal ?? item.totalPrice * item.quantity
+
   const cartTotal = cart.reduce((s, i) => s + i.totalPrice * i.quantity, 0)
   const sentTotal = sentOrders.reduce((s, i) => s + i.totalPrice * i.quantity, 0)
-  const grandTotal = cartTotal + sentTotal
+  const cartRemaining = cart.reduce((s, i) => s + lineRemaining(i), 0)
+  const sentRemaining = sentOrders.reduce((s, i) => s + lineRemaining(i), 0)
+  const billTotal = cartTotal + sentTotal
+  const paidTotal = payments.reduce((s, p) => s + p.amount, 0)
+  const openTotal = Math.max(0, cartRemaining + sentRemaining)
   const cartCount = cart.reduce((s, i) => s + i.quantity, 0)
+  const hasTabSummary = cart.length > 0 || sentOrders.length > 0
 
   if (!open) return null
 
@@ -119,16 +140,35 @@ export default function CartDrawer({
                 >
                   Ya en cocina <span style={{ opacity: 0.6, fontWeight: 400 }}>· In Kitchen</span>
                 </p>
-                {sentOrders.map((item) => (
-                  <div key={item.cartId} className="flex justify-between py-1">
-                    <span className="text-muted-foreground" style={{ fontSize: "0.82rem" }}>
-                      {item.quantity}× {item.name}
-                    </span>
-                    <span className="text-muted-foreground" style={{ fontSize: "0.82rem" }}>
-                      {formatCRC(item.totalPrice * item.quantity)}
-                    </span>
-                  </div>
-                ))}
+                {sentOrders.map((item) => {
+                  const remaining = lineRemaining(item)
+                  const total = lineTotal(item)
+                  const isPaid = remaining <= 0
+                  return (
+                    <div key={item.cartId} className={`flex justify-between py-1 ${isPaid ? "opacity-50" : ""}`}>
+                      <span className="text-muted-foreground" style={{ fontSize: "0.82rem" }}>
+                        {item.quantity}× {item.name}
+                        {isPaid && (
+                          <span className="text-status-green ml-1.5" style={{ fontSize: "0.68rem", fontWeight: 600 }}>
+                            Pagado
+                          </span>
+                        )}
+                      </span>
+                      {remaining < total ? (
+                        <span className="text-right" style={{ fontSize: "0.82rem" }}>
+                          <span className="text-muted-foreground line-through block" style={{ fontSize: "0.72rem" }}>
+                            {formatCRC(total)}
+                          </span>
+                          <span className="text-foreground font-semibold">{formatCRC(remaining)}</span>
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground" style={{ fontSize: "0.82rem" }}>
+                          {formatCRC(total)}
+                        </span>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             </div>
           )}
@@ -137,68 +177,71 @@ export default function CartDrawer({
         {/* Footer */}
         <div className="flex-shrink-0 px-5 pt-3 pb-3 sm:pt-4 sm:pb-4 border-t border-border safe-bottom">
           {/* Totals */}
-          {cart.length > 0 && (
+          {hasTabSummary && (
             <div className="bg-muted rounded-2xl p-3 sm:p-4 mb-3 sm:mb-4">
-              <div className="flex justify-between mb-1.5">
-                <span className="text-muted-foreground" style={{ fontSize: "0.82rem" }}>
-                  Este pedido
-                </span>
-                <span className="text-foreground" style={{ fontSize: "0.82rem", fontWeight: 600 }}>
-                  {formatCRC(cartTotal)}
-                </span>
-              </div>
-              {sentOrders.length > 0 && (
-                <>
-                  <div className="flex justify-between mb-1.5">
-                    <span className="text-muted-foreground" style={{ fontSize: "0.82rem" }}>
-                      Pedidos anteriores
-                    </span>
-                    <span className="text-foreground" style={{ fontSize: "0.82rem", fontWeight: 600 }}>
-                      {formatCRC(sentTotal)}
-                    </span>
-                  </div>
-                  <div className="border-t border-border mt-2 pt-2 flex justify-between">
-                    <span
-                      className="text-foreground"
-                      style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700, fontSize: "0.95rem" }}
-                    >
-                      Total acumulado
-                    </span>
-                    <div className="text-right">
-                      <span
-                        className="text-foreground block"
-                        style={{ fontFamily: "Outfit, sans-serif", fontWeight: 800, fontSize: "1rem" }}
-                      >
-                        {formatCRC(grandTotal)}
-                      </span>
-                      <span className="text-muted-foreground" style={{ fontSize: "0.7rem" }}>
-                        {formatUSD(grandTotal)}
-                      </span>
-                    </div>
-                  </div>
-                </>
-              )}
-              {sentOrders.length === 0 && (
-                <div className="border-t border-border mt-2 pt-2 flex justify-between">
-                  <span
-                    className="text-foreground"
-                    style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700, fontSize: "0.95rem" }}
-                  >
-                    Total
+              {cart.length > 0 && (
+                <div className="flex justify-between mb-1.5">
+                  <span className="text-muted-foreground" style={{ fontSize: "0.82rem" }}>
+                    Este pedido
                   </span>
-                  <div className="text-right">
-                    <span
-                      className="text-foreground block"
-                      style={{ fontFamily: "Outfit, sans-serif", fontWeight: 800, fontSize: "1rem" }}
-                    >
-                      {formatCRC(cartTotal)}
-                    </span>
-                    <span className="text-muted-foreground" style={{ fontSize: "0.7rem" }}>
-                      {formatUSD(cartTotal)}
-                    </span>
-                  </div>
+                  <span className="text-foreground" style={{ fontSize: "0.82rem", fontWeight: 600 }}>
+                    {formatCRC(cartRemaining)}
+                  </span>
                 </div>
               )}
+              {sentOrders.length > 0 && (
+                <div className="flex justify-between mb-1.5">
+                  <span className="text-muted-foreground" style={{ fontSize: "0.82rem" }}>
+                    Pedidos anteriores
+                  </span>
+                  <span className="text-foreground" style={{ fontSize: "0.82rem", fontWeight: 600 }}>
+                    {sentRemaining < sentTotal ? (
+                      <span>
+                        <span className="text-muted-foreground line-through mr-1.5" style={{ fontWeight: 500 }}>
+                          {formatCRC(sentTotal)}
+                        </span>
+                        {formatCRC(sentRemaining)}
+                      </span>
+                    ) : (
+                      formatCRC(sentRemaining)
+                    )}
+                  </span>
+                </div>
+              )}
+              {paidTotal > 0 && (
+                <div className="flex justify-between mb-1.5">
+                  <span className="text-muted-foreground" style={{ fontSize: "0.82rem" }}>
+                    Ya pagado
+                  </span>
+                  <span className="text-muted-foreground" style={{ fontSize: "0.82rem", fontWeight: 600 }}>
+                    − {formatCRC(paidTotal)}
+                  </span>
+                </div>
+              )}
+              <div className="border-t border-border mt-2 pt-2 flex justify-between">
+                <span
+                  className={paidTotal > 0 ? "text-primary" : "text-foreground"}
+                  style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700, fontSize: "0.95rem" }}
+                >
+                  {paidTotal > 0 ? "Saldo pendiente" : "Total acumulado"}
+                </span>
+                <div className="text-right">
+                  <span
+                    className={`block ${paidTotal > 0 ? "text-primary" : "text-foreground"}`}
+                    style={{ fontFamily: "Outfit, sans-serif", fontWeight: 800, fontSize: "1rem" }}
+                  >
+                    {formatCRC(openTotal)}
+                  </span>
+                  <span className="text-muted-foreground" style={{ fontSize: "0.7rem" }}>
+                    {formatUSD(openTotal, exchangeRate)}
+                  </span>
+                  {paidTotal > 0 && (
+                    <span className="text-muted-foreground block mt-0.5" style={{ fontSize: "0.65rem" }}>
+                      Total consumo {formatCRC(billTotal)}
+                    </span>
+                  )}
+                </div>
+              </div>
             </div>
           )}
 
@@ -217,15 +260,19 @@ export default function CartDrawer({
             </button>
           )}
 
-          {grandTotal > 0 && (
+          {openTotal > 0 && (
             <button
               onClick={onRequestBill}
               className="w-full bg-muted text-foreground rounded-2xl flex items-center justify-center gap-2 active:scale-[0.98] transition-transform"
               style={{ minHeight: "48px", fontWeight: 700, fontSize: "0.88rem" }}
             >
               <div className="flex flex-col items-center leading-tight">
-                <span>Pedir la cuenta</span>
-                <span className="text-muted-foreground" style={{ fontSize: "0.65rem", fontWeight: 400 }}>Request Bill</span>
+                <span>
+                  Pedir la cuenta · {formatCRC(openTotal)}
+                </span>
+                <span className="text-muted-foreground" style={{ fontSize: "0.65rem", fontWeight: 400 }}>
+                  Request Bill
+                </span>
               </div>
             </button>
           )}

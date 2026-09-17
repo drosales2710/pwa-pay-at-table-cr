@@ -1,15 +1,33 @@
 import { useState, useEffect } from "react"
-import { useNavigate, useParams } from "react-router-dom"
-import { Wifi, ChevronRight, UtensilsCrossed, Globe, User } from "lucide-react"
+import { useNavigate, useParams, useSearchParams } from "react-router-dom"
+import { Wifi, ChevronRight, Globe, User } from "lucide-react"
 import { useGuest } from "../../context/GuestContext"
+import GuestPhoneFrame from "../../components/GuestPhoneFrame"
+import RestaurantLogo from "../../components/RestaurantLogo"
 
 export default function QRLanding() {
   const { tableId } = useParams<{ tableId: string }>()
+  const [searchParams] = useSearchParams()
   const navigate = useNavigate()
-  const { restaurant, joinTable, guests } = useGuest()
+  const {
+    restaurant,
+    joinTable,
+    guests,
+    sessionClosed,
+    resetTableForNewParty,
+    grantMenuAccess,
+  } = useGuest()
   const [step, setStep] = useState<"scan" | "init" | "ready">("scan")
   const [name, setName] = useState("")
   const [showNameStep, setShowNameStep] = useState(false)
+  const [resetDone, setResetDone] = useState(false)
+
+  useEffect(() => {
+    if (sessionClosed && !resetDone) {
+      resetTableForNewParty()
+      setResetDone(true)
+    }
+  }, [sessionClosed, resetDone, resetTableForNewParty])
 
   useEffect(() => {
     const t1 = setTimeout(() => setStep("init"), 800)
@@ -20,39 +38,37 @@ export default function QRLanding() {
     }
   }, [])
 
+  const restaurantParam = searchParams.get("restaurant") || restaurant.id
+  const menuPath = `/menu?table=${tableId}&restaurant=${restaurantParam}`
+
   const enter = () => {
     if (!showNameStep) {
       setShowNameStep(true)
       return
     }
+    grantMenuAccess()
     joinTable(name || undefined)
-    navigate(`/menu?table=${tableId}`)
+    navigate(menuPath)
   }
 
   const skipName = () => {
+    grantMenuAccess()
     joinTable()
-    navigate(`/menu?table=${tableId}`)
+    navigate(menuPath)
   }
 
   const guestCount = guests.length
 
   return (
-    <div
-      className="flex justify-center items-start"
-      style={{ background: "#E5E0DA", height: "100svh", overflow: "hidden" }}
-    >
-      <div
-        className="relative w-full max-w-[430px] bg-background flex flex-col shadow-2xl overflow-hidden"
-        style={{ height: "100svh" }}
-      >
+    <GuestPhoneFrame>
         <div className="flex flex-col min-h-screen bg-background overflow-y-auto pb-12 sm:pb-16">
           <div
             className="flex flex-col items-center justify-center pt-10 pb-8 sm:pt-16 sm:pb-12 px-6"
-            style={{ background: "linear-gradient(180deg, #FFF7ED 0%, #FAFAF7 100%)" }}
+            style={{
+              background: "linear-gradient(180deg, var(--color-primary-light) 0%, var(--color-background) 100%)",
+            }}
           >
-            <div className="w-14 h-14 sm:w-16 sm:h-16 bg-primary rounded-2xl flex items-center justify-center mb-4 shadow-lg">
-              <UtensilsCrossed size={28} className="text-white sm:size-[32px]" />
-            </div>
+            <RestaurantLogo restaurant={restaurant} size="md" className="mb-4" />
             <h1
               className="text-foreground text-center"
               style={{ fontFamily: "Outfit, sans-serif", fontWeight: 800, fontSize: "1.8rem" }}
@@ -68,7 +84,10 @@ export default function QRLanding() {
             <div className="relative mb-6 sm:mb-8 flex flex-col items-center">
               <div
                 className="w-40 h-40 sm:w-48 sm:h-48 rounded-2xl border-4 border-primary p-3 bg-white shadow-xl"
-                style={{ boxShadow: "0 0 0 1px #F97316, 0 8px 32px rgba(249,115,22,0.15)" }}
+                style={{
+                  boxShadow:
+                    "0 0 0 1px var(--color-primary), 0 8px 32px rgba(var(--color-primary-rgb), 0.15)",
+                }}
               >
                 <QRMock />
               </div>
@@ -193,8 +212,7 @@ export default function QRLanding() {
             </div>
           </div>
         </div>
-      </div>
-    </div>
+    </GuestPhoneFrame>
   )
 }
 

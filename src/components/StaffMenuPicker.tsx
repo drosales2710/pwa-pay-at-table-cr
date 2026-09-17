@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from "react"
 import { ChevronLeft, Star, ShoppingCart } from "lucide-react"
-import { MENU_ITEMS, CATEGORIES, type CategoryId } from "../data/menuData"
+import { CATEGORIES, type CategoryId } from "../data/menuData"
 import { formatCRC, formatUSD } from "../utils/format"
+import { menuItemImageStyle } from "../utils/menuImage"
 import type { MenuItem, Restaurant } from "../types"
 
 interface StaffMenuPickerProps {
@@ -9,6 +10,7 @@ interface StaffMenuPickerProps {
   tableNumber: number
   onClose: () => void
   onAddItem: (item: MenuItem) => void
+  menuItems: MenuItem[]
 }
 
 export default function StaffMenuPicker({
@@ -16,6 +18,7 @@ export default function StaffMenuPicker({
   tableNumber,
   onClose,
   onAddItem,
+  menuItems,
 }: StaffMenuPickerProps) {
   const [activeCategory, setActiveCategory] = useState<CategoryId>("entradas")
   const [imgErrors, setImgErrors] = useState<Record<string, boolean>>({})
@@ -97,7 +100,7 @@ export default function StaffMenuPicker({
 
         <div ref={contentRef} className="flex-1 overflow-y-auto px-4 pb-8">
           {CATEGORIES.map((cat) => {
-            const items = MENU_ITEMS.filter((i) => i.category === cat.id)
+            const items = menuItems.filter((i) => i.category === cat.id)
             return (
               <div
                 key={cat.id}
@@ -124,7 +127,7 @@ export default function StaffMenuPicker({
                           <img
                             src={item.image}
                             alt=""
-                            className="w-full h-full object-cover"
+                            style={menuItemImageStyle(item)}
                             onError={() => setImgErrors((p) => ({ ...p, [item.id]: true }))}
                           />
                         ) : (

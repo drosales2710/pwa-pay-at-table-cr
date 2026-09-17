@@ -1,10 +1,10 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { ChevronLeft, ChefHat, CheckCircle2, Clock, Plus, Undo2 } from "lucide-react"
 import PortalSwitcher from "./PortalSwitcher"
 import type { CartItem, PaymentRecord } from "../types"
 import type { KDSTicket } from "../data/mockData"
 import { formatCRC, formatUSD } from "../utils/format"
-import { groupByReceiptCycle } from "../utils/billing"
+import { groupByReceiptCycle, buildItemSettlementMap, type ItemSettlement } from "../utils/billing"
 import {
   undoSecondsRemaining,
   canGuestUndoItem,
@@ -12,6 +12,7 @@ import {
   type SentOrderBatch,
 } from "../utils/order"
 import { isItemKitchenStarted } from "../utils/kds"
+import { getGuestOrderItemStatus, guestOrderStatusClass } from "../utils/guestOrderStatus"
 
 interface OrderHistoryScreenProps {
   sentOrders: CartItem[]
@@ -47,6 +48,10 @@ export default function OrderHistoryScreen({
   }, [])
 
   const cycleGroups = groupByReceiptCycle(sentOrders, cart, payments)
+  const settlement = useMemo(
+    () => buildItemSettlementMap(sentOrders, cart, payments),
+    [sentOrders, cart, payments]
+  )
   const sentTotal = sentOrders.reduce((s, i) => s + i.totalPrice * i.quantity, 0)
   const cartTotal = cart.reduce((s, i) => s + i.totalPrice * i.quantity, 0)
   const grandTotal = sentTotal + cartTotal
@@ -96,7 +101,7 @@ export default function OrderHistoryScreen({
 
       <div className="flex-1 overflow-y-auto pb-32 px-4">
         {cancelMessage && (
-          <div className="mt-4 px-4 py-3 rounded-xl bg-primary/10 text-primary text-center" style={{ fontSize: "0.78rem", fontWeight: 600 }}>
+          <div className="mt-4 px-4 py-3 rounded-xl bg-primary/10 text-primary-on-light text-center" style={{ fontSize: "0.78rem", fontWeight: 600 }}>
             {cancelMessage}
           </div>
         )}
@@ -151,6 +156,7 @@ export default function OrderHistoryScreen({
                     batch={batch}
                     now={now}
                     kdsTickets={kdsTickets}
+                    settlement={settlement}
                     onCancelItem={handleCancel}
                   />
                 ))}
@@ -178,7 +184,7 @@ export default function OrderHistoryScreen({
                       <div className="flex-1">
                         <div className="flex items-start gap-2">
                           <span
-                            className="bg-primary/10 text-primary rounded-md px-1.5 py-0.5 flex-shrink-0"
+                            className="bg-primary/10 text-primary-on-light rounded-md px-1.5 py-0.5 flex-shrink-0"
                             style={{ fontSize: "0.7rem", fontWeight: 700 }}
                           >
                             {item.quantity}×
@@ -276,11 +282,13 @@ function SentBatchCard({
   batch,
   now,
   kdsTickets,
+  settlement,
   onCancelItem,
 }: {
   batch: SentOrderBatch
   now: number
   kdsTickets: KDSTicket[]
+  settlement: Map<string, ItemSettlement>
   onCancelItem: (cartId: string) => void
 }) {
   const secondsLeft = undoSecondsRemaining(batch.sentAt, now)
@@ -308,12 +316,19 @@ function SentBatchCard({
       {batch.items.map((item, idx) => {
         const started = isItemKitchenStarted(kdsTickets, item.cartId)
         const itemUndoable = canGuestUndoItem(item.sentAt, started, now)
+        const line = settlement.get(item.cartId)
+        const remainingDue = line?.remainingDue ?? item.totalPrice * item.quantity
+        const lineTotal = line?.lineTotal ?? item.totalPrice * item.quantity
+        const isPaid = remainingDue <= 0
+        const status = getGuestOrderItemStatus(item, kdsTickets, remainingDue, now)
+        const statusClass = guestOrderStatusClass(status.tone)
+
         return (
           <div
             key={item.cartId}
             className={`px-4 py-3.5 flex items-start justify-between gap-3 ${
               idx < batch.items.length - 1 ? "border-b border-border" : ""
-            }`}
+            } ${isPaid ? "opacity-60" : ""}`}
           >
             <div className="flex-1 min-w-0">
               <div className="flex items-start gap-2">
@@ -333,22 +348,40 @@ function SentBatchCard({
                     </p>
                   )}
                   <div className="flex items-center gap-1 mt-1">
-                    <CheckCircle2 size={10} className="text-status-green" />
-                    <span className="text-status-green" style={{ fontSize: "0.65rem", fontWeight: 600 }}>
-                      {itemUndoable ? "Enviado" : started ? "En cocina" : "Confirmado"}
+                    <CheckCircle2 size={10} className={statusClass} />
+                    <span className={statusClass} style={{ fontSize: "0.65rem", fontWeight: 600 }}>
+                      {status.label}{" "}
+                      <span style={{ opacity: 0.75, fontWeight: 500 }}>/ {status.labelEn}</span>
                     </span>
                   </div>
                 </div>
               </div>
             </div>
             <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
-              <span
-                className="text-foreground"
-                style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700, fontSize: "0.88rem" }}
-              >
-                {formatCRC(item.totalPrice * item.quantity)}
-              </span>
-              {itemUndoable && (
+              {remainingDue < lineTotal ? (
+                <>
+                  <span
+                    className="text-muted-foreground line-through"
+                    style={{ fontFamily: "Outfit, sans-serif", fontWeight: 600, fontSize: "0.78rem" }}
+                  >
+                    {formatCRC(lineTotal)}
+                  </span>
+                  <span
+                    className="text-foreground"
+                    style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700, fontSize: "0.88rem" }}
+                  >
+                    {formatCRC(remainingDue)}
+                  </span>
+                </>
+              ) : (
+                <span
+                  className="text-foreground"
+                  style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700, fontSize: "0.88rem" }}
+                >
+                  {formatCRC(lineTotal)}
+                </span>
+              )}
+              {itemUndoable && !isPaid && (
                 <button
                   type="button"
                   onClick={() => onCancelItem(item.cartId)}

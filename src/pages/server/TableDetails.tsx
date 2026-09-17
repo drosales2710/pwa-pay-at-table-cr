@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { useParams, useNavigate } from "react-router-dom"
 import {
   ChevronLeft,
@@ -13,7 +13,6 @@ import {
   Trash2,
   Lock,
   Ban,
-  Gift,
   Minus,
 } from "lucide-react"
 import PortalSwitcher from "../../components/PortalSwitcher"
@@ -21,17 +20,10 @@ import StaffMenuPicker from "../../components/StaffMenuPicker"
 import ModifierModal from "../../components/ModifierModal"
 import { elapsedMins, type GuardianOrder, type KDSTicket } from "../../data/mockData"
 import { formatCRC } from "../../utils/format"
-import { findKdsTicketForCartItem, isItemKitchenStarted } from "../../utils/kds"
+import { findKdsTicketForCartItem } from "../../utils/kds"
 import { isReceiptCyclePaid, staffGuestId } from "../../utils/billEdit"
 import { useGuest } from "../../context/GuestContext"
-import type { CartItem, CompRecord, MenuItem, Restaurant, TableGuest, PaymentRecord } from "../../types"
-
-const COMP_REASONS = [
-  "Cortesía de la casa",
-  "Error de pedido",
-  "Artículo incorrecto",
-  "Cliente insatisfecho",
-]
+import type { CartItem, MenuItem, Restaurant, TableGuest, PaymentRecord } from "../../types"
 
 export default function TableDetails() {
   const { id } = useParams<{ id: string }>()
@@ -46,8 +38,10 @@ export default function TableDetails() {
     kdsTickets,
     staffSendToKitchen,
     staffVoidItem,
-    staffCompItem,
     staffRemoveCartItem,
+    staffPresentBill,
+    staffClearTable,
+    menuItems,
   } = useGuest()
 
   const table = allTables.find((t) => t.id === id) || allTables[0]
@@ -62,6 +56,73 @@ export default function TableDetails() {
   const showBanner = (msg: string) => {
     setBanner(msg)
     window.setTimeout(() => setBanner(null), 2800)
+  }
+
+  const billState = useMemo(() => {
+    const paidTotal = session?.payments.reduce((s, p) => s + p.amount, 0) ?? 0
+    const billTotal = table.billTotal
+    const remaining = Math.max(0, billTotal - paidTotal)
+    const isFullyPaid = billTotal > 0 && remaining === 0
+    const isPaying = session?.lifecycle === "paying" || Boolean(session?.splitSnapshot)
+    const hasSentOrders = (session?.sentOrders.length ?? 0) > 0
+    const hasCart = (session?.cart.length ?? 0) > 0
+    const pendingGuardian = queue.some((q) => q.status === "pending")
+
+    return { paidTotal, billTotal, remaining, isFullyPaid, isPaying, hasSentOrders, hasCart, pendingGuardian }
+  }, [session, table.billTotal, queue])
+
+  const closeAction = useMemo(() => {
+    if (billState.isFullyPaid) {
+      return { label: "Liberar mesa", disabled: billState.pendingGuardian }
+    }
+    if (billState.isPaying) {
+      return { label: "Esperando pago", disabled: false }
+    }
+    return {
+      label: "Presentar cuenta",
+      disabled: !billState.hasSentOrders || billState.hasCart || billState.pendingGuardian,
+    }
+  }, [billState])
+
+  const openGuestMenuPreview = () => {
+    navigate(
+      `/menu?table=${tableId}&restaurant=${restaurant.id}&staffPreview=1&return=${encodeURIComponent(`/server/table/${table.id}`)}`
+    )
+  }
+
+  const handleCloseAccount = () => {
+    if (billState.isFullyPaid) {
+      const result = staffClearTable(tableId)
+      if (result.ok) {
+        showBanner("Mesa liberada — lista para nuevos comensales")
+        navigate("/server/floor-plan")
+      } else if (result.reason === "guardian_pending") {
+        showBanner("Aprueba los pedidos pendientes antes de liberar la mesa")
+      } else {
+        showBanner("Aún hay saldo pendiente por cobrar")
+      }
+      return
+    }
+
+    if (billState.isPaying) {
+      showBanner("Cuenta presentada — los comensales pueden pagar desde su teléfono")
+      return
+    }
+
+    const result = staffPresentBill(tableId)
+    if (result.ok) {
+      showBanner("Cuenta presentada — los comensales pueden pagar desde su teléfono")
+      return
+    }
+
+    const messages = {
+      empty: "No hay consumo enviado a cocina para presentar",
+      cart_pending: "Envía o quita los artículos del carrito antes de presentar la cuenta",
+      guardian_pending: "Aprueba los pedidos pendientes antes de presentar la cuenta",
+      already_paid: "La cuenta ya está pagada — puedes liberar la mesa",
+      already_paying: "La cuenta ya fue presentada",
+    }
+    showBanner(messages[result.reason])
   }
 
   return (
@@ -178,7 +239,6 @@ export default function TableDetails() {
             <OrdersTab
               sentOrders={session?.sentOrders ?? []}
               cart={session?.cart ?? []}
-              comps={session?.comps ?? []}
               guests={session?.guests ?? []}
               payments={session?.payments ?? []}
               pendingOrderLinks={session?.pendingOrderLinks ?? {}}
@@ -186,21 +246,10 @@ export default function TableDetails() {
               total={table.billTotal}
               onVoid={(cartId) => {
                 const result = staffVoidItem(tableId, cartId)
-                if (result.ok) showBanner("Artículo anulado y quitado de cocina / Voided")
-                else if (result.reason === "kitchen_started")
-                  showBanner("La cocina ya comenzó — usa Cortesía / Kitchen started — Comp")
+                if (result.ok) showBanner("Artículo anulado / Voided")
                 else if (result.reason === "paid")
                   showBanner("Ya pagado — requiere reembolso / Paid — needs refund")
                 else showBanner("No se pudo anular / Could not void")
-              }}
-              onComp={(cartId, reason) => {
-                const result = staffCompItem(tableId, cartId, reason)
-                if (result.ok) showBanner("Cortesía aplicada — no se cobra / Comp applied")
-                else if (result.reason === "still_pending")
-                  showBanner("Aún en cola — anula en su lugar / Still pending — void instead")
-                else if (result.reason === "paid")
-                  showBanner("Ya pagado — requiere reembolso / Paid — needs refund")
-                else showBanner("No se pudo aplicar cortesía / Could not comp")
               }}
               onRemoveCart={(cartId) => {
                 const result = staffRemoveCartItem(tableId, cartId)
@@ -219,25 +268,30 @@ export default function TableDetails() {
                 setActiveTab("orders")
               }}
               staffSendToKitchen={staffSendToKitchen}
+              menuItems={menuItems}
             />
           )}
         </div>
 
         <div className="safe-bottom border-t border-border bg-card px-5 py-4 flex gap-3">
           <button
-            onClick={() => navigate(`/m/${table.number}`)}
-            className="flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl bg-muted text-foreground"
+            type="button"
+            onClick={openGuestMenuPreview}
+            className="flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl bg-muted text-foreground active:scale-[0.99]"
             style={{ fontSize: "0.82rem", fontWeight: 700 }}
           >
             <ChefHat size={16} />
             <span>Ver menú cliente</span>
           </button>
           <button
-            className="flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl text-white"
-            style={{ fontSize: "0.82rem", fontWeight: 700, background: "#6366F1" }}
+            type="button"
+            onClick={handleCloseAccount}
+            disabled={closeAction.disabled}
+            className="flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl text-white disabled:opacity-40 active:scale-[0.99]"
+            style={{ fontSize: "0.82rem", fontWeight: 700, background: billState.isFullyPaid ? "var(--color-confirm-green)" : "var(--color-server)" }}
           >
             <CreditCard size={16} />
-            <span>Cerrar cuenta</span>
+            <span>{closeAction.label}</span>
           </button>
         </div>
       </div>
@@ -364,34 +418,28 @@ function GuardianTab({
 function OrdersTab({
   sentOrders,
   cart,
-  comps,
   guests,
   payments,
   pendingOrderLinks,
   kdsTickets,
   total,
   onVoid,
-  onComp,
   onRemoveCart,
 }: {
   sentOrders: CartItem[]
   cart: CartItem[]
-  comps: CompRecord[]
   guests: TableGuest[]
   payments: PaymentRecord[]
   pendingOrderLinks: Record<string, string[]>
   kdsTickets: KDSTicket[]
   total: number
   onVoid: (cartId: string) => void
-  onComp: (cartId: string, reason: string) => void
   onRemoveCart: (cartId: string) => void
 }) {
-  const [compTarget, setCompTarget] = useState<CartItem | null>(null)
-  const [compReason, setCompReason] = useState(COMP_REASONS[0])
   const guestName = (guestId: string) => guests.find((g) => g.guestId === guestId)?.displayName ?? "Comensal"
   const pendingIds = new Set(Object.values(pendingOrderLinks).flat())
 
-  if (sentOrders.length === 0 && cart.length === 0 && comps.length === 0) {
+  if (sentOrders.length === 0 && cart.length === 0) {
     return (
       <div className="text-center py-12">
         <p className="text-muted-foreground" style={{ fontSize: "0.85rem" }}>
@@ -433,7 +481,6 @@ function OrdersTab({
         <div className="bg-card rounded-2xl border border-border overflow-hidden">
           {sentOrders.map((item, i) => {
             const ticket = findKdsTicketForCartItem(kdsTickets, item.cartId)
-            const started = isItemKitchenStarted(kdsTickets, item.cartId)
             const paid = isReceiptCyclePaid(item, sentOrders, cart, payments)
             const awaiting = pendingIds.has(item.cartId)
             const status = paid
@@ -477,18 +524,6 @@ function OrdersTab({
                     >
                       <Lock size={11} /> Requiere reembolso
                     </span>
-                  ) : started ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setCompTarget(item)
-                        setCompReason(COMP_REASONS[0])
-                      }}
-                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-amber-200 text-amber-800 bg-amber-50"
-                      style={{ fontSize: "0.65rem", fontWeight: 700 }}
-                    >
-                      <Gift size={12} /> Cortesía / Comp
-                    </button>
                   ) : (
                     <button
                       type="button"
@@ -510,89 +545,6 @@ function OrdersTab({
             <span className="text-foreground" style={{ fontFamily: "Outfit, sans-serif", fontWeight: 800 }}>
               {formatCRC(total)}
             </span>
-          </div>
-        </div>
-      )}
-
-      {comps.length > 0 && (
-        <div>
-          <p className="text-muted-foreground mb-2" style={{ fontSize: "0.72rem", fontWeight: 700 }}>
-            Cortesías / Comps — no se cobran
-          </p>
-          <div className="bg-card rounded-2xl border border-amber-200 overflow-hidden">
-            {comps.map((c, i) => (
-              <div key={c.id} className={`px-4 py-3 ${i < comps.length - 1 ? "border-b border-border" : ""}`}>
-                <div className="flex justify-between gap-2">
-                  <div>
-                    <p className="text-foreground" style={{ fontSize: "0.85rem", fontWeight: 600 }}>
-                      {c.quantity > 1 ? `${c.quantity}× ` : ""}
-                      {c.name}
-                    </p>
-                    <p className="text-amber-800 mt-0.5" style={{ fontSize: "0.68rem" }}>
-                      {c.reason} · {guestName(c.orderedBy)}
-                    </p>
-                  </div>
-                  <span className="text-muted-foreground line-through" style={{ fontSize: "0.8rem", fontWeight: 600 }}>
-                    {formatCRC(c.unitPrice * c.quantity)}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {compTarget && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center" style={{ background: "rgba(28,25,23,0.4)" }}>
-          <div className="w-full max-w-[430px] bg-card rounded-t-3xl px-5 pt-4 pb-6">
-            <div className="flex justify-center mb-3">
-              <div className="w-10 h-1 bg-border rounded-full" />
-            </div>
-            <h3
-              className="text-foreground mb-1"
-              style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700, fontSize: "1.05rem" }}
-            >
-              Cortesía / Comp
-            </h3>
-            <p className="text-muted-foreground mb-4" style={{ fontSize: "0.78rem" }}>
-              {compTarget.name} sale de la cuenta. La cocina sigue el ticket — la casa asume el costo.
-            </p>
-            <div className="flex flex-col gap-2 mb-4">
-              {COMP_REASONS.map((reason) => (
-                <button
-                  key={reason}
-                  type="button"
-                  onClick={() => setCompReason(reason)}
-                  className={`text-left px-4 py-2.5 rounded-xl border ${
-                    compReason === reason ? "border-primary bg-primary/5 text-foreground" : "border-border text-muted-foreground"
-                  }`}
-                  style={{ fontSize: "0.82rem", fontWeight: 600 }}
-                >
-                  {reason}
-                </button>
-              ))}
-            </div>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setCompTarget(null)}
-                className="flex-1 py-3 rounded-xl bg-muted text-foreground"
-                style={{ fontSize: "0.85rem", fontWeight: 700 }}
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  onComp(compTarget.cartId, compReason)
-                  setCompTarget(null)
-                }}
-                className="flex-1 py-3 rounded-xl text-white"
-                style={{ fontSize: "0.85rem", fontWeight: 700, background: "#6366F1" }}
-              >
-                Aplicar cortesía
-              </button>
-            </div>
           </div>
         </div>
       )}
@@ -656,6 +608,7 @@ function ManualOrderTab({
   guests,
   onSent,
   staffSendToKitchen,
+  menuItems,
 }: {
   tableId: string
   tableNumber: number
@@ -663,6 +616,7 @@ function ManualOrderTab({
   guests: TableGuest[]
   onSent: () => void
   staffSendToKitchen: ReturnType<typeof useGuest>["staffSendToKitchen"]
+  menuItems: MenuItem[]
 }) {
   const [note, setNote] = useState("")
   const [draft, setDraft] = useState<DraftLine[]>([])
@@ -812,6 +766,7 @@ function ManualOrderTab({
             setPickerOpen(false)
             setModifierItem(item)
           }}
+          menuItems={menuItems}
         />
       )}
       {modifierItem && (

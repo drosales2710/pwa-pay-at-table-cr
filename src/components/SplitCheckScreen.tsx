@@ -227,10 +227,13 @@ export default function SplitCheckScreen({
                     const remaining = line?.remainingDue ?? item.totalPrice * item.quantity
                     const lineTotal = line?.lineTotal ?? item.totalPrice * item.quantity
                     const remainingUnits = line?.remainingUnits ?? item.quantity
+                    const paidUnits = line?.paidUnits ?? 0
                     const isPaid = remaining <= 0
+                    const isPartiallyPaid = paidUnits > 0 && !isPaid
+                    const displayQty = isPaid ? item.quantity : remainingUnits
                     const isMyItems = method === "myItems" && !isPaid
                     const selectedUnits = unitSelections[item.cartId] ?? 0
-                    const showStepper = isMyItems && item.quantity > 1 && remainingUnits > 0
+                    const showStepper = isMyItems && remainingUnits > 1
                     const showCheckbox = isMyItems && !showStepper
 
                     return (
@@ -276,9 +279,14 @@ export default function SplitCheckScreen({
                               className="text-foreground"
                               style={{ fontSize: "0.88rem", fontWeight: 600 }}
                             >
-                              {item.quantity > 1 ? `${item.quantity}× ` : ""}
+                              {displayQty > 1 ? `${displayQty}× ` : ""}
                               {item.name}
                             </p>
+                            {isPartiallyPaid && item.quantity > 1 && (
+                              <p className="text-muted-foreground mt-0.5" style={{ fontSize: "0.72rem" }}>
+                                {paidUnits} de {item.quantity} pagada{paidUnits === 1 ? "" : "s"}
+                              </p>
+                            )}
                             {item.modifiers.length > 0 && (
                               <p className="text-muted-foreground truncate" style={{ fontSize: "0.72rem" }}>
                                 {item.modifiers.join(" · ")}

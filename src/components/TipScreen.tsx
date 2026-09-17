@@ -93,7 +93,7 @@ export default function TipScreen({
         {!readOnly && (
           <>
             <div className="mt-5 flex items-center gap-3 bg-secondary rounded-2xl px-4 py-3.5">
-              <Heart size={18} className="text-primary flex-shrink-0" fill="#F97316" />
+              <Heart size={18} className="text-primary flex-shrink-0" fill="currentColor" />
               <p className="text-foreground" style={{ fontSize: "0.82rem", fontWeight: 500 }}>
                 Tu propina hace una gran diferencia para nuestro equipo. ¡Muchas gracias!
               </p>

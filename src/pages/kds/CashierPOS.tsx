@@ -2,9 +2,10 @@ import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { ChefHat, Wine, CreditCard, Users, Clock, CheckCircle2, Printer } from "lucide-react"
 import PortalSwitcher from "../../components/PortalSwitcher"
-import { formatCRCShort, elapsedMins, type TableRecord } from "../../data/mockData"
-import { formatCRC } from "../../utils/format"
+import { elapsedMins, type TableRecord } from "../../data/mockData"
+import { formatCRC, formatCRCShort } from "../../utils/format"
 import { useGuest } from "../../context/GuestContext"
+import type { PaymentRecord } from "../../types"
 
 export default function CashierPOS() {
   const navigate = useNavigate()
@@ -145,7 +146,7 @@ function FloorTab({ tables }: { tables: TableRecord[] }) {
   )
 }
 
-function PaymentsTab({ payments }: { payments: Array<{ id: string; guestName: string; amount: number; tipAmount: number; paidAt: string; splitMethod: string }> }) {
+function PaymentsTab({ payments }: { payments: PaymentRecord[] }) {
   if (payments.length === 0) {
     return (
       <div style={{ textAlign: "center", padding: "48px 0", color: "#6B7280", fontSize: "0.85rem" }}>
@@ -169,7 +170,7 @@ function PaymentsTab({ payments }: { payments: Array<{ id: string; guestName: st
               <p style={{ color: "#4ADE80", fontFamily: "Outfit, sans-serif", fontWeight: 800, fontSize: "0.88rem" }}>
                 {formatCRC(tx.amount + tx.tipAmount)}
               </p>
-              <p style={{ color: "#6B7280", fontSize: "0.62rem" }}>{tx.splitMethod}</p>
+              <p style={{ color: "#6B7280", fontSize: "0.62rem" }}>{tx.splitMethod ?? "—"}</p>
             </div>
           </div>
         ))}

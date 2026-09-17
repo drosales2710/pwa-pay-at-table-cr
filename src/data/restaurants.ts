@@ -21,6 +21,7 @@ export const RESTAURANTS: Restaurant[] = [
     guardianConfig: { mode: "smart", priceThresholdColones: 15000, quantityAnomalyEnabled: true },
     tables: makeTables(16),
     sinpe: { phone: "8888-4321", merchantName: "La Terraza S.A." },
+    brand: { primaryColor: "#F97316" },
   },
   {
     id: "soda-marisol",
@@ -31,6 +32,7 @@ export const RESTAURANTS: Restaurant[] = [
     guardianConfig: { mode: "smart", priceThresholdColones: 15000, quantityAnomalyEnabled: true },
     tables: makeTables(10),
     sinpe: { phone: "8777-2210", merchantName: "Soda Marisol" },
+    brand: { primaryColor: "#B45309", primaryLight: "#FFFBEB" },
   },
   {
     id: "el-patio-azul",
@@ -41,6 +43,7 @@ export const RESTAURANTS: Restaurant[] = [
     guardianConfig: { mode: "smart", priceThresholdColones: 15000, quantityAnomalyEnabled: true },
     tables: makeTables(20),
     sinpe: { phone: "8666-9087", merchantName: "El Patio Azul Restaurante" },
+    brand: { primaryColor: "#0284C7", primaryLight: "#E0F2FE" },
   },
 ]
 

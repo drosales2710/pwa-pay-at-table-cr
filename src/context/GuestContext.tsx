@@ -2,7 +2,6 @@ import { createContext, useContext, useState, useEffect, useMemo, useCallback } 
 import { Outlet, useParams, useSearchParams } from "react-router-dom"
 import type {
   CartItem,
-  CompRecord,
   MenuItem,
   Restaurant,
   TableGuest,
@@ -10,10 +9,11 @@ import type {
   TableBalance,
   SplitMethod,
   PaymentRecord,
+  PaymentMethod,
 } from "../types"
-import { getRestaurantById, DEFAULT_RESTAURANT_ID } from "../data/restaurants"
+import { DEFAULT_RESTAURANT_ID } from "../data/restaurants"
+import { applyRestaurantBrand, resetRestaurantBrand } from "../utils/brandTheme"
 import { FLOOR_TABLES, type TableRecord, type GuardianOrder, type KDSTicket, type KDSStatus } from "../data/mockData"
-import { MENU_ITEMS } from "../data/menuData"
 import { getOrCreateGuestId, getGuestName, setGuestName as persistGuestName } from "../utils/guestSession"
 import { shouldQueueForGuardian, evaluateOrderForGuardian } from "../utils/guardian"
 import { createKdsTicketsFromCart, isItemKitchenStarted, pullCartItemFromTickets } from "../utils/kds"
@@ -34,13 +34,31 @@ import {
   type ItemUnitSelection,
 } from "../utils/billing"
 import { getEffectiveGuestCount } from "../utils/devFlags"
+import {
+  createTableSessionId,
+  isGuestMenuAccessValid,
+  isTableSessionClosed,
+  loadGuestMenuAccess,
+  loadStoredTableSessions,
+  revokeGuestMenuAccess,
+  saveGuestMenuAccess,
+  saveStoredTableSessions,
+} from "../utils/tableSession"
+import { recordClosedCheck, stampSessionWithOpenShift, getOpenStaffShift } from "../utils/staffSession"
+import { countCovers } from "../utils/shiftStats"
+import { getLiveRestaurant, getRestaurantFeatures, saveRestaurantOverlay, type RestaurantOverlay } from "../utils/restaurantConfig"
+import { listAvailableMenuItems, loadMenuCatalog } from "../utils/menuCatalog"
+import { applyCatalogToFloorTable } from "../utils/tableCatalog"
+import { OPS_EVENT } from "../utils/opsEvents"
 
-const STORAGE_KEY = "cr-pat-guest-session"
 const CHECKOUT_LOCK_MS = 8 * 60 * 1000 // 8 minutes
 
 export interface TableSession {
   tableId: string
+  /** Unique id for this seating — changes when the table is reset after full payment. */
+  sessionId: string
   lifecycle: TableLifecycleStatus
+  closedAt: string | null
   cart: CartItem[]
   sentOrders: CartItem[]
   /** Last kitchen send batch number (not billing cycle). */
@@ -53,8 +71,9 @@ export interface TableSession {
   checkoutLock: { guestId: string; expiresAt: string } | null
   /** Maps guardian orderId → optimistic cartIds for rollback on reject */
   pendingOrderLinks: Record<string, string[]>
-  /** Kitchen already started — item left the guest bill, house ate the cost. */
-  comps: CompRecord[]
+  /** Staff member who owns this table during the current seating. */
+  serverId: string | null
+  serverName: string | null
 }
 
 interface SharedState {
@@ -63,15 +82,12 @@ interface SharedState {
   kdsTickets: KDSTicket[]
 }
 
-interface PersistedState {
-  restaurantId: string
-  tableId: string
-}
-
 function emptySession(tableId: string): TableSession {
   return {
     tableId,
+    sessionId: createTableSessionId(),
     lifecycle: "available",
+    closedAt: null,
     cart: [],
     sentOrders: [],
     sendBatch: 0,
@@ -81,7 +97,8 @@ function emptySession(tableId: string): TableSession {
     splitSnapshot: null,
     checkoutLock: null,
     pendingOrderLinks: {},
-    comps: [],
+    serverId: null,
+    serverName: null,
   }
 }
 
@@ -127,38 +144,67 @@ function withLifecycle(session: TableSession): TableSession {
   return { ...session, lifecycle: deriveLifecycle(session) }
 }
 
-function loadPersisted(): PersistedState | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return null
-    return JSON.parse(raw) as PersistedState
-  } catch {
-    return null
-  }
-}
-
-function savePersisted(state: PersistedState) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
-  } catch {
-    // ignore
-  }
-}
-
 function deriveLifecycle(session: TableSession): TableLifecycleStatus {
+  if (session.closedAt || session.lifecycle === "closed") return "closed"
+
   const billTotal = sumItems(session.sentOrders) + sumItems(session.cart)
   const paidTotal = session.payments.reduce((s, p) => s + p.amount, 0)
 
-  if (session.lifecycle === "closed") return "closed"
-  if (billTotal > 0 && paidTotal >= billTotal) return "paid"
   if (session.payments.length > 0 || session.splitSnapshot) return "paying"
   if (session.sentOrders.length > 0 || session.cart.length > 0) return "ordering"
   if (session.guests.length > 0) return "seated"
   return "available"
 }
 
+function hydrateSession(raw: TableSession): TableSession {
+  const base: TableSession = {
+    ...emptySession(raw.tableId),
+    ...raw,
+    sessionId: raw.sessionId ?? createTableSessionId(),
+    closedAt: raw.closedAt ?? null,
+    serverId: raw.serverId ?? null,
+    serverName: raw.serverName ?? null,
+  }
+  return {
+    ...base,
+    lifecycle: base.closedAt ? "closed" : deriveLifecycle(base),
+  }
+}
+
+function loadInitialSessions(): Record<string, TableSession> {
+  const stored = loadStoredTableSessions()
+  const sessions: Record<string, TableSession> = {}
+  for (const [tableId, raw] of Object.entries(stored)) {
+    sessions[tableId] = hydrateSession(raw as TableSession)
+  }
+  return sessions
+}
+
+function persistSessions(sessions: Record<string, TableSession>) {
+  saveStoredTableSessions(sessions)
+}
+
+function maybeRecordClosedCheck(session: TableSession) {
+  if (!session.closedAt || session.payments.length === 0) return
+  recordClosedCheck({
+    tableId: session.tableId,
+    sessionId: session.sessionId,
+    closedAt: session.closedAt,
+    sales: session.payments.reduce((s, p) => s + p.amount, 0),
+    tips: session.payments.reduce((s, p) => s + p.tipAmount, 0),
+    covers: countCovers(session.guests),
+    payments: session.payments.map((p) => ({
+      amount: p.amount,
+      tipAmount: p.tipAmount,
+      paidAt: p.paidAt,
+    })),
+  })
+}
+
 interface GuestContextType {
   restaurant: Restaurant
+  menuItems: MenuItem[]
+  showUsd: boolean
   tableId: string
   guestId: string
   guestName: string | null
@@ -168,6 +214,10 @@ interface GuestContextType {
   sendBatch: number
   receiptCycle: number
   lifecycle: TableLifecycleStatus
+  sessionClosed: boolean
+  menuAccessGranted: boolean
+  grantMenuAccess: () => void
+  resetTableForNewParty: () => void
   guests: TableGuest[]
   payments: PaymentRecord[]
   tableBalance: TableBalance
@@ -188,7 +238,13 @@ interface GuestContextType {
   cancelSentItem: (cartId: string) => { ok: true } | { ok: false; reason: GuestCancelReason }
   handleModifierConfirm: (item: MenuItem, qty: number, modifiers: string[], unitPrice: number) => void
   lockSplitForCheckout: (method: SplitMethod, guestCount: number, unitSelections?: ItemUnitSelection[]) => number
-  recordPayment: (amount: number, tipAmount: number, method: SplitMethod) => void
+  recordPayment: (
+    amount: number,
+    tipAmount: number,
+    method: SplitMethod,
+    unitSelections?: ItemUnitSelection[],
+    tender?: PaymentMethod
+  ) => void
   releaseCheckoutLock: () => void
 
   allTables: TableRecord[]
@@ -207,12 +263,16 @@ interface GuestContextType {
     options?: { notes?: string; orderedBy?: string }
   ) => { ok: true } | { ok: false; reason: "empty" }
   staffVoidItem: (tableId: string, cartId: string) => { ok: true } | { ok: false; reason: StaffBillReason }
-  staffCompItem: (
-    tableId: string,
-    cartId: string,
-    reason: string
-  ) => { ok: true } | { ok: false; reason: StaffBillReason }
   staffRemoveCartItem: (tableId: string, cartId: string) => { ok: true } | { ok: false; reason: "not_found" }
+  listTableSessions: () => TableSession[]
+  staffPresentBill: (
+    tableId: string
+  ) =>
+    | { ok: true }
+    | { ok: false; reason: "empty" | "cart_pending" | "guardian_pending" | "already_paid" | "already_paying" }
+  staffClearTable: (tableId: string) => { ok: true } | { ok: false; reason: "unpaid" | "guardian_pending" }
+  grantStaffMenuPreview: (tableId: string) => void
+  saveRestaurantSettings: (overlay: RestaurantOverlay) => void
 }
 
 const GuestContext = createContext<GuestContextType | null>(null)
@@ -227,21 +287,33 @@ export function GuestProvider() {
   const params = useParams<{ tableId?: string }>()
   const [searchParams] = useSearchParams()
 
-  const persisted = loadPersisted()
+  const persisted = loadGuestMenuAccess()
   const restaurantIdFromUrl = searchParams.get("restaurant")
   const tableIdFromUrl = searchParams.get("table") || params.tableId
   const resolvedRestaurantId = restaurantIdFromUrl || persisted?.restaurantId || DEFAULT_RESTAURANT_ID
-  const restaurant = getRestaurantById(resolvedRestaurantId)
+  const [opsTick, setOpsTick] = useState(0)
+  const restaurant = useMemo(
+    () => getLiveRestaurant(resolvedRestaurantId),
+    [resolvedRestaurantId, opsTick]
+  )
+  const menuItems = useMemo(() => listAvailableMenuItems(), [opsTick])
+  const showUsd = getRestaurantFeatures(restaurant.id).dualCurrency
+
+  useEffect(() => {
+    const bump = () => setOpsTick((n) => n + 1)
+    window.addEventListener(OPS_EVENT, bump)
+    return () => window.removeEventListener(OPS_EVENT, bump)
+  }, [])
   const resolvedTableId = tableIdFromUrl || persisted?.tableId || "7"
 
   const [guestId] = useState(() => getOrCreateGuestId())
   const [guestName, setGuestNameState] = useState<string | null>(() => getGuestName())
 
-  const [shared, setShared] = useState<SharedState>({
-    sessions: {},
+  const [shared, setShared] = useState<SharedState>(() => ({
+    sessions: loadInitialSessions(),
     guardianQueue: [],
     kdsTickets: [],
-  })
+  }))
 
   const currentSession = shared.sessions[resolvedTableId] ?? emptySession(resolvedTableId)
   const lifecycle = deriveLifecycle(currentSession)
@@ -257,22 +329,160 @@ export function GuestProvider() {
   const [modifierItem, setModifierItem] = useState<MenuItem | null>(null)
   const [payAmount, setPayAmount] = useState(0)
   const [tipAmount, setTipAmount] = useState(0)
+  const [menuAccessTick, setMenuAccessTick] = useState(0)
 
   useEffect(() => {
-    savePersisted({ restaurantId: restaurant.id, tableId: resolvedTableId })
-  }, [restaurant.id, resolvedTableId])
+    saveGuestMenuAccess({
+      restaurantId: restaurant.id,
+      tableId: resolvedTableId,
+      tableSessionId: currentSession.sessionId,
+      menuAccess: loadGuestMenuAccess()?.menuAccess ?? false,
+    })
+  }, [restaurant.id, resolvedTableId, currentSession.sessionId])
+
+  useEffect(() => {
+    applyRestaurantBrand(restaurant.brand)
+    return () => resetRestaurantBrand()
+  }, [restaurant.id, restaurant.brand?.primaryColor])
 
   const updateSession = useCallback((tableId: string, updater: (s: TableSession) => TableSession) => {
     setShared((prev) => {
       const s = prev.sessions[tableId] ?? emptySession(tableId)
       const updated = updater(s)
-      const withLifecycle = { ...updated, lifecycle: deriveLifecycle(updated) }
+      const withLifecycle: TableSession = updated.closedAt
+        ? { ...updated, lifecycle: "closed" }
+        : { ...updated, lifecycle: deriveLifecycle(updated) }
+      const nextSessions = { ...prev.sessions, [tableId]: withLifecycle }
+      persistSessions(nextSessions)
       return {
         ...prev,
-        sessions: { ...prev.sessions, [tableId]: withLifecycle },
+        sessions: nextSessions,
       }
     })
   }, [])
+
+  const resetTableForNewParty = useCallback(() => {
+    setShared((prev) => {
+      const previous = prev.sessions[resolvedTableId]
+      if (previous) maybeRecordClosedCheck(previous)
+      const nextSessions = {
+        ...prev.sessions,
+        [resolvedTableId]: emptySession(resolvedTableId),
+      }
+      persistSessions(nextSessions)
+      return {
+        ...prev,
+        sessions: nextSessions,
+        guardianQueue: prev.guardianQueue.filter((q) => q.tableId !== resolvedTableId),
+      }
+    })
+  }, [resolvedTableId])
+
+  const staffClearTable = useCallback(
+    (tableId: string): { ok: true } | { ok: false; reason: "unpaid" | "guardian_pending" } => {
+      const hasPending = shared.guardianQueue.some(
+        (q) => q.tableId === tableId && q.status === "pending"
+      )
+      if (hasPending) return { ok: false, reason: "guardian_pending" }
+
+      const session = shared.sessions[tableId] ?? emptySession(tableId)
+      const billTotal = sumItems(session.sentOrders) + sumItems(session.cart)
+      const paidTotal = session.payments.reduce((s, p) => s + p.amount, 0)
+      const remaining = Math.max(0, billTotal - paidTotal)
+      if (billTotal > 0 && remaining > 0) return { ok: false, reason: "unpaid" }
+
+      setShared((prev) => {
+        const previous = prev.sessions[tableId]
+        if (previous) maybeRecordClosedCheck(previous)
+        const nextSessions = {
+          ...prev.sessions,
+          [tableId]: emptySession(tableId),
+        }
+        persistSessions(nextSessions)
+        return {
+          ...prev,
+          sessions: nextSessions,
+          guardianQueue: prev.guardianQueue.filter((q) => q.tableId !== tableId),
+        }
+      })
+      return { ok: true }
+    },
+    [shared.guardianQueue, shared.sessions]
+  )
+
+  const staffPresentBill = useCallback(
+    (
+      tableId: string
+    ):
+      | { ok: true }
+      | { ok: false; reason: "empty" | "cart_pending" | "guardian_pending" | "already_paid" | "already_paying" } => {
+      const hasPending = shared.guardianQueue.some(
+        (q) => q.tableId === tableId && q.status === "pending"
+      )
+      if (hasPending) return { ok: false, reason: "guardian_pending" }
+
+      const session = shared.sessions[tableId] ?? emptySession(tableId)
+      if (session.cart.length > 0) return { ok: false, reason: "cart_pending" }
+      if (session.sentOrders.length === 0) return { ok: false, reason: "empty" }
+
+      const billTotal = sumItems(session.sentOrders)
+      const paidTotal = session.payments.reduce((s, p) => s + p.amount, 0)
+      const remaining = Math.max(0, billTotal - paidTotal)
+      if (billTotal > 0 && remaining === 0) return { ok: false, reason: "already_paid" }
+      if (session.lifecycle === "paying" || session.splitSnapshot) {
+        return { ok: false, reason: "already_paying" }
+      }
+
+      const guestCount = Math.max(
+        session.guests.filter((g) => !g.guestId.startsWith("staff-")).length,
+        1
+      )
+
+      updateSession(tableId, (s) => ({
+        ...stampSessionWithOpenShift(s),
+        lifecycle: "paying",
+        splitSnapshot: s.splitSnapshot ?? createSplitSnapshot("full", billTotal, guestCount),
+      }))
+      return { ok: true }
+    },
+    [shared.guardianQueue, shared.sessions, updateSession]
+  )
+
+  const grantStaffMenuPreview = useCallback(
+    (tableId: string) => {
+      setShared((prev) => {
+        const session = prev.sessions[tableId] ?? emptySession(tableId)
+        saveGuestMenuAccess({
+          restaurantId: restaurant.id,
+          tableId,
+          tableSessionId: session.sessionId,
+          menuAccess: true,
+        })
+        return prev
+      })
+      setMenuAccessTick((n) => n + 1)
+    },
+    [restaurant.id]
+  )
+
+  const saveRestaurantSettings = useCallback((overlay: RestaurantOverlay) => {
+    saveRestaurantOverlay(restaurant.id, overlay)
+    setOpsTick((n) => n + 1)
+  }, [restaurant.id])
+
+  const grantMenuAccess = useCallback(() => {
+    setShared((prev) => {
+      const session = prev.sessions[resolvedTableId] ?? emptySession(resolvedTableId)
+      saveGuestMenuAccess({
+        restaurantId: restaurant.id,
+        tableId: resolvedTableId,
+        tableSessionId: session.sessionId,
+        menuAccess: true,
+      })
+      return prev
+    })
+    setMenuAccessTick((n) => n + 1)
+  }, [restaurant.id, resolvedTableId])
 
   const joinTable = useCallback(
     (displayName?: string) => {
@@ -283,40 +493,70 @@ export function GuestProvider() {
       }
 
       updateSession(resolvedTableId, (s) => {
-        const exists = s.guests.some((g) => g.guestId === guestId)
+        const stamped = stampSessionWithOpenShift(s)
+        const exists = stamped.guests.some((g) => g.guestId === guestId)
         if (exists) {
           return {
-            ...s,
-            guests: s.guests.map((g) =>
+            ...stamped,
+            guests: stamped.guests.map((g) =>
               g.guestId === guestId && name ? { ...g, displayName: name } : g
             ),
           }
         }
         const newGuest: TableGuest = {
           guestId,
-          displayName: name || `Comensal ${s.guests.length + 1}`,
+          displayName: name || `Comensal ${stamped.guests.length + 1}`,
           joinedAt: new Date().toISOString(),
-          index: s.guests.length,
+          index: stamped.guests.length,
         }
         return {
-          ...s,
-          guests: [...s.guests, newGuest],
-          lifecycle: s.lifecycle === "available" ? "seated" : s.lifecycle,
+          ...stamped,
+          guests: [...stamped.guests, newGuest],
+          lifecycle: stamped.lifecycle === "available" ? "seated" : stamped.lifecycle,
         }
       })
     },
     [guestId, guestName, resolvedTableId, updateSession]
   )
 
-  // Auto-join when navigating directly to menu
+  // Re-join returning guests who still have an active session (e.g. after partial payment).
   useEffect(() => {
-    if (resolvedTableId && tableIdFromUrl) {
-      joinTable()
+    const access = loadGuestMenuAccess()
+    if (
+      !resolvedTableId ||
+      !access?.menuAccess ||
+      isTableSessionClosed(currentSession)
+    ) {
+      return
     }
-  }, [resolvedTableId, tableIdFromUrl, joinTable])
+    if (!isGuestMenuAccessValid(access, restaurant.id, resolvedTableId, currentSession.sessionId)) {
+      return
+    }
+    joinTable()
+  }, [resolvedTableId, restaurant.id, currentSession.sessionId, currentSession.closedAt, joinTable])
+
+  const sessionClosed = isTableSessionClosed(currentSession)
+  const menuAccessGranted = useMemo(
+    () =>
+      isGuestMenuAccessValid(
+        loadGuestMenuAccess(),
+        restaurant.id,
+        resolvedTableId,
+        currentSession.sessionId
+      ),
+    [restaurant.id, resolvedTableId, currentSession.sessionId, sessionClosed, menuAccessTick]
+  )
+
+  const assertCanOrder = useCallback(() => {
+    if (sessionClosed) return false
+    if (!menuAccessGranted) return false
+    return true
+  }, [sessionClosed, menuAccessGranted])
 
   const addToCart = useCallback(
     (item: MenuItem, quantity: number, modifiers: string[], unitPrice: number) => {
+      if (!assertCanOrder()) return
+
       const newItem: CartItem = {
         cartId: `${item.id}-${Date.now()}`,
         menuItemId: item.id,
@@ -346,7 +586,7 @@ export function GuestProvider() {
         return { ...s, cart: newCart, lifecycle: "ordering" }
       })
     },
-    [currentSession.receiptCycle, guestId, resolvedTableId, updateSession]
+    [currentSession.receiptCycle, guestId, resolvedTableId, updateSession, assertCanOrder]
   )
 
   const handleModifierConfirm = (item: MenuItem, qty: number, modifiers: string[], unitPrice: number) => {
@@ -370,21 +610,22 @@ export function GuestProvider() {
   }
 
   const sendToKitchen = () => {
-    if (cart.length === 0) return
+    if (!assertCanOrder() || cart.length === 0) return
 
     const parsedTableNum = parseInt(resolvedTableId.toString().replace(/\D/g, "")) || 1
     const orderId = `gq-${Date.now()}`
     const orderTotal = sumItems(cart)
     const tableGuestCount = Math.max(currentSession.guests.length, 1)
+    const catalog = loadMenuCatalog()
     const evaluation = evaluateOrderForGuardian(
       cart,
-      MENU_ITEMS,
+      catalog,
       tableGuestCount,
       restaurant.guardianConfig
     )
     const needsGuardian = shouldQueueForGuardian(
       cart,
-      MENU_ITEMS,
+      catalog,
       tableGuestCount,
       restaurant.guardianConfig
     )
@@ -426,7 +667,7 @@ export function GuestProvider() {
 
       const kdsTickets = needsGuardian
         ? prev.kdsTickets
-        : [...prev.kdsTickets, ...createKdsTicketsFromCart(optimisticSentItems, parsedTableNum, sendBatchNum, orderId)]
+        : [...prev.kdsTickets, ...createKdsTicketsFromCart(optimisticSentItems, parsedTableNum, sendBatchNum, orderId, loadMenuCatalog())]
 
       return {
         ...prev,
@@ -434,19 +675,23 @@ export function GuestProvider() {
           ? [...prev.guardianQueue, newGuardianEntry]
           : prev.guardianQueue,
         kdsTickets,
-        sessions: {
-          ...prev.sessions,
-          [resolvedTableId]: {
-            ...session,
-            cart: [],
-            sentOrders: [...session.sentOrders, ...optimisticSentItems],
-            sendBatch: sendBatchNum,
-            lifecycle: "ordering",
-            pendingOrderLinks: needsGuardian
-              ? { ...session.pendingOrderLinks, [orderId]: linkedIds }
-              : session.pendingOrderLinks,
-          },
-        },
+        sessions: (() => {
+          const nextSessions = {
+            ...prev.sessions,
+            [resolvedTableId]: {
+              ...session,
+              cart: [],
+              sentOrders: [...session.sentOrders, ...optimisticSentItems],
+              sendBatch: sendBatchNum,
+              lifecycle: "ordering" as const,
+              pendingOrderLinks: needsGuardian
+                ? { ...session.pendingOrderLinks, [orderId]: linkedIds }
+                : session.pendingOrderLinks,
+            },
+          }
+          persistSessions(nextSessions)
+          return nextSessions
+        })(),
       }
     })
     setCartOpen(false)
@@ -536,7 +781,9 @@ export function GuestProvider() {
             ...guests,
             {
               guestId: orderedBy,
-              displayName: orderedBy.startsWith("staff-") ? "Mesero" : `Comensal ${guests.length + 1}`,
+                  displayName: orderedBy.startsWith("staff-")
+                    ? getOpenStaffShift()?.staffName ?? "Mesero"
+                    : `Comensal ${guests.length + 1}`,
               joinedAt: sentAt,
               index: guests.length,
             },
@@ -560,24 +807,29 @@ export function GuestProvider() {
           source: "staff",
         }))
 
-        const nextSession = withLifecycle({
-          ...session,
-          guests,
-          cart: session.cart,
-          sentOrders: [...session.sentOrders, ...sentItems],
-          sendBatch: sendBatchNum,
-        })
+        const nextSession = withLifecycle(
+          stampSessionWithOpenShift({
+            ...session,
+            guests,
+            cart: session.cart,
+            sentOrders: [...session.sentOrders, ...sentItems],
+            sendBatch: sendBatchNum,
+          })
+        )
+
+        const nextSessions = {
+          ...prev.sessions,
+          [tableId]: nextSession,
+        }
+        persistSessions(nextSessions)
 
         return {
           ...prev,
           kdsTickets: [
             ...prev.kdsTickets,
-            ...createKdsTicketsFromCart(sentItems, parsedTableNum, sendBatchNum, orderId, MENU_ITEMS, notes),
+            ...createKdsTicketsFromCart(sentItems, parsedTableNum, sendBatchNum, orderId, loadMenuCatalog(), notes),
           ],
-          sessions: {
-            ...prev.sessions,
-            [tableId]: nextSession,
-          },
+          sessions: nextSessions,
         }
       })
 
@@ -599,10 +851,6 @@ export function GuestProvider() {
         }
         if (isReceiptCyclePaid(item, session.sentOrders, session.cart, session.payments)) {
           result = { ok: false, reason: "paid" }
-          return prev
-        }
-        if (isItemKitchenStarted(prev.kdsTickets, cartId)) {
-          result = { ok: false, reason: "kitchen_started" }
           return prev
         }
 
@@ -627,63 +875,6 @@ export function GuestProvider() {
               ...session,
               sentOrders: remaining,
               pendingOrderLinks,
-            }),
-          },
-        }
-      })
-
-      return result
-    },
-    []
-  )
-
-  const staffCompItem = useCallback(
-    (
-      tableId: string,
-      cartId: string,
-      reason: string
-    ): { ok: true } | { ok: false; reason: StaffBillReason } => {
-      let result: { ok: true } | { ok: false; reason: StaffBillReason } = { ok: false, reason: "not_found" }
-
-      setShared((prev) => {
-        const session = prev.sessions[tableId] ?? emptySession(tableId)
-        const item = session.sentOrders.find((i) => i.cartId === cartId)
-        if (!item) {
-          result = { ok: false, reason: "not_found" }
-          return prev
-        }
-        if (isReceiptCyclePaid(item, session.sentOrders, session.cart, session.payments)) {
-          result = { ok: false, reason: "paid" }
-          return prev
-        }
-        if (!isItemKitchenStarted(prev.kdsTickets, cartId)) {
-          result = { ok: false, reason: "still_pending" }
-          return prev
-        }
-
-        const remaining = session.sentOrders.filter((i) => i.cartId !== cartId)
-        const ticket = prev.kdsTickets.find((t) => t.items.some((i) => i.id === cartId))
-        const comp: CompRecord = {
-          id: `comp-${Date.now()}`,
-          cartId: item.cartId,
-          name: item.name,
-          quantity: item.quantity,
-          unitPrice: item.totalPrice,
-          reason: reason.trim() || "Cortesía de la casa",
-          createdAt: new Date().toISOString(),
-          orderedBy: item.orderedBy,
-          kdsStatus: ticket?.status ?? "none",
-        }
-        result = { ok: true }
-
-        return {
-          ...prev,
-          sessions: {
-            ...prev.sessions,
-            [tableId]: withLifecycle({
-              ...session,
-              sentOrders: remaining,
-              comps: [...(session.comps ?? []), comp],
             }),
           },
         }
@@ -729,7 +920,7 @@ export function GuestProvider() {
       const linkedIds = session.pendingOrderLinks[orderId] ?? []
       const linkedItems = session.sentOrders.filter((i) => linkedIds.includes(i.cartId))
       const round = linkedItems[0]?.round ?? session.sendBatch
-      const newTickets = createKdsTicketsFromCart(linkedItems, order.tableNumber, round, orderId)
+      const newTickets = createKdsTicketsFromCart(linkedItems, order.tableNumber, round, orderId, loadMenuCatalog())
       const { [orderId]: _, ...restLinks } = session.pendingOrderLinks
 
       return {
@@ -846,7 +1037,13 @@ export function GuestProvider() {
     return amount
   }
 
-  const recordPayment = (amount: number, tip: number, method: SplitMethod) => {
+  const recordPayment = (
+    amount: number,
+    tip: number,
+    method: SplitMethod,
+    unitSelections?: ItemUnitSelection[],
+    tender?: PaymentMethod
+  ) => {
     updateSession(resolvedTableId, (s) => {
       const targetCycle = getOldestUnpaidReceiptCycle(s.sentOrders, s.cart, s.payments)
       const payment: PaymentRecord = {
@@ -858,22 +1055,34 @@ export function GuestProvider() {
         splitMethod: method,
         paidAt: new Date().toISOString(),
         receiptCycle: targetCycle,
+        ...(tender ? { tender } : {}),
+        ...(method === "myItems" && unitSelections?.some((sel) => sel.units > 0)
+          ? { itemSelections: unitSelections.filter((sel) => sel.units > 0) }
+          : {}),
       }
       const payments = [...s.payments, payment]
       const billTotal = sumItems(s.sentOrders) + sumItems(s.cart)
       const paidTotal = payments.reduce((acc, p) => acc + p.amount, 0)
-      const nextLifecycle: TableLifecycleStatus =
-        paidTotal >= billTotal && billTotal > 0 ? "paid" : "paying"
+      const remaining = Math.max(0, billTotal - paidTotal)
+      const isTabFullyPaid = billTotal > 0 && remaining === 0
       const nextReceiptCycle = nextReceiptCycleAfterPayment(s.payments, targetCycle, s.receiptCycle)
 
-      return {
-        ...s,
+      if (isTabFullyPaid) {
+        revokeGuestMenuAccess()
+      }
+
+      const next: TableSession = {
+        ...stampSessionWithOpenShift(s),
         payments,
         receiptCycle: nextReceiptCycle,
-        lifecycle: nextLifecycle,
+        lifecycle: isTabFullyPaid ? "closed" : "paying",
+        closedAt: isTabFullyPaid ? new Date().toISOString() : s.closedAt,
         checkoutLock: null,
-        splitSnapshot: nextLifecycle === "paid" ? null : s.splitSnapshot,
+        splitSnapshot: isTabFullyPaid ? null : s.splitSnapshot,
       }
+
+      if (isTabFullyPaid) maybeRecordClosedCheck(next)
+      return next
     })
   }
 
@@ -928,24 +1137,27 @@ export function GuestProvider() {
       const lifecycle = session ? deriveLifecycle(session) : "available"
       const firstJoined = session?.guests[0]?.joinedAt
 
-      return {
+      return applyCatalogToFloorTable({
         ...t,
         status: statusMap[lifecycle],
         billTotal,
         hasGuardianPending: hasPending,
         guestCount: session?.guests.length ?? 0,
         openedAt: firstJoined ? new Date(firstJoined) : null,
-        server: null,
-      } as TableRecord
+        server: session?.serverName ?? t.server,
+      } as TableRecord)
     })
-  }, [shared])
+  }, [shared, opsTick])
 
   const getTableSession = (tableId: string) => shared.sessions[tableId] ?? null
+  const listTableSessions = useCallback(() => Object.values(shared.sessions), [shared.sessions])
 
   return (
     <GuestContext.Provider
       value={{
         restaurant,
+        menuItems,
+        showUsd,
         tableId: resolvedTableId,
         guestId,
         guestName,
@@ -955,6 +1167,10 @@ export function GuestProvider() {
         sendBatch,
         receiptCycle,
         lifecycle,
+        sessionClosed,
+        menuAccessGranted,
+        grantMenuAccess,
+        resetTableForNewParty,
         guests: currentSession.guests,
         payments: currentSession.payments,
         tableBalance,
@@ -982,13 +1198,17 @@ export function GuestProvider() {
         approveGuardianOrder,
         rejectGuardianOrder,
         getTableSession,
+        listTableSessions,
         kdsTickets: shared.kdsTickets,
         advanceKdsTicket,
         bumpKdsTicket,
         staffSendToKitchen,
         staffVoidItem,
-        staffCompItem,
         staffRemoveCartItem,
+        staffPresentBill,
+        staffClearTable,
+        grantStaffMenuPreview,
+        saveRestaurantSettings,
       }}
     >
       <Outlet />

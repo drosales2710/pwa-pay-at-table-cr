@@ -2,8 +2,11 @@ import { useState, useMemo } from "react"
 import { useNavigate } from "react-router-dom"
 import { Bell, Settings, User, Users, Clock, TriangleAlert } from "lucide-react"
 import PortalSwitcher from "../../components/PortalSwitcher"
-import { formatCRCShort, elapsedMins, type TableRecord, type TableStatus } from "../../data/mockData"
+import { elapsedMins, type TableRecord, type TableStatus } from "../../data/mockData"
+import { formatCRCShort } from "../../utils/format"
 import { useGuest } from "../../context/GuestContext"
+import { getOpenStaffShift, getPersonInitials } from "../../utils/staffSession"
+import { listTableSections } from "../../utils/tableCatalog"
 
 const STATUS_CONFIG: Record<TableStatus, { label: string; labelEn: string; bg: string; border: string; text: string; dot: string }> = {
   available: { label: "Disponible", labelEn: "Available", bg: "#F5F5F4", border: "#D6D3D1", text: "#78716C", dot: "#A8A29E" },
@@ -23,17 +26,12 @@ const APPROVAL_CONFIG = {
 
 type FloorFilter = TableStatus | "all" | "approval"
 
-const SECTIONS = [
-  { id: "main",    label: "Salón Principal", labelEn: "Main Dining" },
-  { id: "bar",     label: "Barra",           labelEn: "Bar" },
-  { id: "private", label: "Privado",         labelEn: "Private" },
-  { id: "terrace", label: "Terraza",         labelEn: "Terrace" },
-] as const
-
 export default function FloorPlan() {
   const navigate = useNavigate()
   const { allTables: tables, restaurant } = useGuest()
+  const shift = getOpenStaffShift()
   const [filter, setFilter] = useState<FloorFilter>("all")
+  const sections = listTableSections()
   const pendingAlerts = tables.filter((t) => t.hasGuardianPending).length
 
   const firstPendingTable = tables.find((t) => t.hasGuardianPending)
@@ -95,8 +93,16 @@ export default function FloorPlan() {
                   </span>
                 </button>
               )}
-              <button onClick={() => navigate("/server/shift-closing")} className="w-9 h-9 flex items-center justify-center bg-muted rounded-full">
-                <User size={17} className="text-foreground" />
+              <button
+                onClick={() => navigate("/server/shift-closing")}
+                className="w-9 h-9 flex items-center justify-center bg-muted rounded-full"
+                aria-label="Mi turno"
+              >
+                {shift ? (
+                  <span className="text-micro font-extrabold text-foreground">{getPersonInitials(shift.staffName)}</span>
+                ) : (
+                  <User size={17} className="text-foreground" />
+                )}
               </button>
             </div>
           </div>
@@ -169,7 +175,7 @@ export default function FloorPlan() {
               <p className="text-muted-foreground mt-3" style={{ fontSize: "0.85rem" }}>Sin pedidos por aprobar / No approvals needed</p>
             </div>
           )}
-          {SECTIONS.map((section) => {
+          {sections.map((section) => {
             const sectionTables = filtered.filter((t) => t.section === section.id)
             if (sectionTables.length === 0) return null
             return (

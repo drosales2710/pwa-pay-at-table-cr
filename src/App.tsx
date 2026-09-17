@@ -16,6 +16,7 @@ import ServerLogin from "./pages/server/ServerLogin"
 import FloorPlan from "./pages/server/FloorPlan"
 import TableDetails from "./pages/server/TableDetails"
 import ShiftSummary from "./pages/server/ShiftSummary"
+import RequireStaffShift from "./pages/server/RequireStaffShift"
 // (Server UI is rendered inside <GuestProvider> below so it can share
 // live table/cart/guardian-queue state via useGuest())
 
@@ -30,6 +31,9 @@ import MenuBuilder from "./pages/admin/MenuBuilder"
 import TableQRGenerator from "./pages/admin/TableQRGenerator"
 import Analytics from "./pages/admin/Analytics"
 import SystemSettings from "./pages/admin/SystemSettings"
+import AdminLogin from "./pages/admin/AdminLogin"
+import RequireAdmin from "./pages/admin/RequireAdmin"
+import TeamPage from "./pages/admin/TeamPage"
 
 export default function App() {
   return (
@@ -50,23 +54,28 @@ export default function App() {
 
           {/* Server UI */}
           <Route path="/server/login" element={<ServerLogin />} />
-          <Route path="/server/floor-plan" element={<FloorPlan />} />
-          <Route path="/server/table/:id" element={<TableDetails />} />
-          <Route path="/server/shift-closing" element={<ShiftSummary />} />
+          <Route element={<RequireStaffShift />}>
+            <Route path="/server/floor-plan" element={<FloorPlan />} />
+            <Route path="/server/table/:id" element={<TableDetails />} />
+            <Route path="/server/shift-closing" element={<ShiftSummary />} />
+          </Route>
 
           {/* KDS & Cashier — share live table/order state via useGuest() */}
           <Route path="/kds/kitchen" element={<KitchenKDS />} />
           <Route path="/kds/bar" element={<BarKDS />} />
           <Route path="/kds/cashier" element={<CashierPOS />} />
-        </Route>
 
-        {/* Admin Portal — AdminLayout provides desktop sidebar + <Outlet /> */}
-        <Route element={<AdminLayout />}>
-          <Route path="/admin/dashboard" element={<AdminDashboard />} />
-          <Route path="/admin/menu-builder" element={<MenuBuilder />} />
-          <Route path="/admin/tables" element={<TableQRGenerator />} />
-          <Route path="/admin/reports" element={<Analytics />} />
-          <Route path="/admin/settings" element={<SystemSettings />} />
+          <Route path="/admin/login" element={<AdminLogin />} />
+          <Route element={<RequireAdmin />}>
+            <Route element={<AdminLayout />}>
+              <Route path="/admin/dashboard" element={<AdminDashboard />} />
+              <Route path="/admin/team" element={<TeamPage />} />
+              <Route path="/admin/menu-builder" element={<MenuBuilder />} />
+              <Route path="/admin/tables" element={<TableQRGenerator />} />
+              <Route path="/admin/reports" element={<Analytics />} />
+              <Route path="/admin/settings" element={<SystemSettings />} />
+            </Route>
+          </Route>
         </Route>
 
         {/* Catch-all */}

@@ -19,8 +19,13 @@ export interface MenuItem {
   price: number // in CRC
   category: "entradas" | "platos" | "bebidas" | "postres"
   image: string
+  /** Focal point for object-fit cover (0–100). */
+  imageFocus?: { x: number; y: number }
+  /** Zoom multiplier for menu thumbnails (1–2). */
+  imageZoom?: number
   popular?: boolean
   isAlcoholic?: boolean
+  available?: boolean
   modifierGroups?: ModifierGroup[]
 }
 
@@ -43,18 +48,6 @@ export interface CartItem {
   orderId?: string
   /** Staff-entered lines are attributed to a guest or the waiter. */
   source?: "guest" | "staff"
-}
-
-export interface CompRecord {
-  id: string
-  cartId: string
-  name: string
-  quantity: number
-  unitPrice: number
-  reason: string
-  createdAt: string
-  orderedBy: string
-  kdsStatus: "pending" | "preparing" | "ready" | "delivered" | "none"
 }
 
 export type TableLifecycleStatus =
@@ -80,6 +73,11 @@ export interface TableGuest {
   index: number // 0-based join order for equal split
 }
 
+export interface PaymentItemSelection {
+  cartId: string
+  units: number
+}
+
 export interface PaymentRecord {
   id: string
   guestId: string
@@ -89,6 +87,10 @@ export interface PaymentRecord {
   splitMethod: SplitMethod
   paidAt: string
   receiptCycle: number
+  /** Whole units covered by this payment (Pay my items). */
+  itemSelections?: PaymentItemSelection[]
+  /** Card wallet / SINPE — used for admin tender split. */
+  tender?: PaymentMethod
 }
 
 export interface TableBalance {
@@ -138,6 +140,16 @@ export interface RestaurantTable {
   number: number
 }
 
+/** Guest-facing visual identity — applied at runtime via CSS variables. */
+export interface RestaurantBrand {
+  /** Main accent (buttons, links, QR frame). */
+  primaryColor: string
+  /** Optional override; auto-derived from primaryColor when omitted. */
+  primaryLight?: string
+  /** Logo URL on CDN/storage; falls back to initials avatar when missing or broken. */
+  logoUrl?: string
+}
+
 export interface Restaurant {
   id: string
   name: string
@@ -150,6 +162,7 @@ export interface Restaurant {
     phone: string
     merchantName: string
   }
+  brand?: RestaurantBrand
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

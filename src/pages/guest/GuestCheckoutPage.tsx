@@ -4,6 +4,8 @@ import { useGuest } from "../../context/GuestContext"
 import SplitCheckScreen from "../../components/SplitCheckScreen"
 import TipScreen from "../../components/TipScreen"
 import CheckoutModal from "../../components/CheckoutModal"
+import GuestPhoneFrame from "../../components/GuestPhoneFrame"
+import SessionExpiredScreen from "../../components/SessionExpiredScreen"
 import type { SplitMethod } from "../../types"
 import type { ItemUnitSelection } from "../../utils/billing"
 import { calculateTaxBreakdown } from "../../utils/tax"
@@ -24,6 +26,7 @@ export default function GuestCheckoutPage() {
   const [payAmount, setPayAmount] = useState(0)
   const [tipAmount, setTipAmount] = useState(0)
   const [splitMethod, setSplitMethod] = useState<SplitMethod>("full")
+  const [itemSelections, setItemSelections] = useState<ItemUnitSelection[] | undefined>()
 
   const taxBreakdown = useMemo(
     () => calculateTaxBreakdown(payAmount, g.restaurant.taxConfig, tipAmount),
@@ -62,6 +65,7 @@ export default function GuestCheckoutPage() {
     resolved = Math.min(Math.max(0, resolved), remaining)
     setSplitMethod(method)
     setPayAmount(resolved)
+    setItemSelections(method === "myItems" ? unitSelections : undefined)
     setStep("tip")
   }
 
@@ -70,8 +74,8 @@ export default function GuestCheckoutPage() {
     setStep("payment")
   }
 
-  const handlePaymentSuccess = () => {
-    g.recordPayment(payAmount, tipAmount, splitMethod)
+  const handlePaymentSuccess = (method: "apple" | "google" | "card") => {
+    g.recordPayment(payAmount, tipAmount, splitMethod, itemSelections, method)
     g.setPayAmount(payAmount)
     g.setTipAmount(tipAmount)
     navigate("/confirmation")
@@ -82,15 +86,18 @@ export default function GuestCheckoutPage() {
     setStep("tip")
   }
 
+  if (g.sessionClosed || !g.menuAccessGranted) {
+    return (
+      <SessionExpiredScreen
+        tableId={g.tableId}
+        restaurantId={g.restaurant.id}
+        reason={g.sessionClosed ? "closed" : "rescan"}
+      />
+    )
+  }
+
   return (
-    <div
-      className="flex justify-center items-start"
-      style={{ background: "#E5E0DA", height: "100svh", overflow: "hidden" }}
-    >
-      <div
-        className="relative w-full max-w-[430px] bg-background flex flex-col shadow-2xl overflow-hidden"
-        style={{ height: "100svh" }}
-      >
+    <GuestPhoneFrame>
         {step === "split" && (
           <SplitCheckScreen
             allItems={openBillItems}
@@ -104,6 +111,7 @@ export default function GuestCheckoutPage() {
             taxConfig={g.restaurant.taxConfig}
             onBack={() => {
               g.releaseCheckoutLock()
+              setItemSelections(undefined)
               setStep("split")
             }}
             onContinue={handleTipContinue}
@@ -128,7 +136,6 @@ export default function GuestCheckoutPage() {
             />
           </>
         )}
-      </div>
-    </div>
+    </GuestPhoneFrame>
   )
 }

@@ -55,7 +55,7 @@ export function canUndoBatch(sentAt: string, now = Date.now()): boolean {
 }
 
 export type GuestCancelReason = "expired" | "kitchen_started" | "not_found"
-export type StaffBillReason = "not_found" | "kitchen_started" | "still_pending" | "paid"
+export type StaffBillReason = "not_found" | "paid"
 
 export function canGuestUndoItem(sentAt: string | undefined, kitchenStarted: boolean, now = Date.now()): boolean {
   if (!sentAt || !canUndoBatch(sentAt, now)) return false

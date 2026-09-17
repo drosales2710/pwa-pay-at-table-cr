@@ -1,8 +1,10 @@
 import { useState, useRef, useEffect } from "react"
-import { ShoppingCart, Star, ChevronDown, UtensilsCrossed } from "lucide-react"
+import { ShoppingCart, Star, ChevronDown } from "lucide-react"
 import PortalSwitcher from "./PortalSwitcher"
-import { MENU_ITEMS, CATEGORIES } from "../data/menuData"
+import RestaurantLogo from "./RestaurantLogo"
+import { CATEGORIES } from "../data/menuData"
 import { formatCRC, formatUSD } from "../utils/format"
+import { menuItemImageStyle } from "../utils/menuImage"
 import type { CartItem, MenuItem, Restaurant, TableGuest } from "../types"
 import type { CategoryId } from "../data/menuData"
 
@@ -16,7 +18,11 @@ interface MenuScreenProps {
   onOpenCart: () => void
   onViewOrders: () => void
   sentOrders: CartItem[]
-  openReceiptCycle: number
+  /** Remaining balance after payments (sent + cart). */
+  openTotal: number
+  previewMode?: boolean
+  menuItems: MenuItem[]
+  showUsd?: boolean
 }
 
 export default function MenuScreen({
@@ -29,7 +35,10 @@ export default function MenuScreen({
   onOpenCart,
   onViewOrders,
   sentOrders,
-  openReceiptCycle,
+  openTotal,
+  previewMode = false,
+  menuItems,
+  showUsd = true,
 }: MenuScreenProps) {
   const [activeCategory, setActiveCategory] = useState<CategoryId>("entradas")
   const [imgErrors, setImgErrors] = useState<Record<string, boolean>>({})
@@ -41,10 +50,8 @@ export default function MenuScreen({
 
   const cartCount = cart.reduce((s, i) => s + i.quantity, 0)
   const cartTotal = cart.reduce((s, i) => s + i.totalPrice * i.quantity, 0)
-  const kitchenSends = new Set(sentOrders.map((o) => o.orderId).filter(Boolean)).size
-  const hasOpenOrders = sentOrders.length > 0
-  const billTotal = sentOrders.reduce((s, i) => s + i.totalPrice * i.quantity, 0)
-
+  const hasSentOrders = sentOrders.length > 0
+  const floatingAmount = cartCount > 0 ? cartTotal : openTotal
   const scrollToCategory = (catId: CategoryId) => {
     setActiveCategory(catId)
     const el = categoryRefs.current[catId]
@@ -122,7 +129,7 @@ export default function MenuScreen({
           <div className="flex items-start justify-between">
             <div>
               <div className="flex items-center gap-1.5 sm:gap-2">
-                <UtensilsCrossed size={16} className="text-primary sm:size-[18px]" />
+                <RestaurantLogo restaurant={restaurant} size="sm" className="shadow-none" />
                 <h1
                   className="text-foreground tracking-tight"
                   style={{ fontFamily: "Outfit, sans-serif", fontWeight: 700, fontSize: "1.1rem" }}
@@ -135,7 +142,7 @@ export default function MenuScreen({
               </p>
               {guestName && (
                 <span
-                  className="inline-flex items-center mt-1.5 bg-primary/10 text-primary px-2.5 py-0.5 rounded-full"
+                  className="inline-flex items-center mt-1.5 bg-primary/10 text-primary-on-light px-2.5 py-0.5 rounded-full"
                   style={{ fontSize: "0.72rem", fontWeight: 700 }}
                 >
                   Hola, {guestName}
@@ -148,16 +155,16 @@ export default function MenuScreen({
               )}
             </div>
               <div className="flex flex-col items-end gap-2">
-                <PortalSwitcher />
-                
+                {!previewMode && <PortalSwitcher />}
+
                 <button
-                  onClick={cartCount > 0 ? onOpenCart : onViewOrders}
+                  onClick={cartCount > 0 && !previewMode ? onOpenCart : onViewOrders}
                   className="flex items-center gap-2 bg-primary text-primary-foreground px-3.5 py-1.5 rounded-full shadow-sm active:scale-95 transition-all"
                   style={{ fontFamily: "Outfit, sans-serif" }}
                 >
                   <div className="relative">
                     <ShoppingCart size={16} />
-                    {(cartCount > 0 || hasOpenOrders) && (
+                    {(cartCount > 0 || hasSentOrders) && (
                       <span
                         className="absolute -top-1.5 -right-1.5 bg-white text-primary w-4 h-4 rounded-full flex items-center justify-center"
                         style={{ fontSize: "0.55rem", fontWeight: 800, border: "1px solid currentColor" }}
@@ -192,33 +199,6 @@ export default function MenuScreen({
                 </div>
               </div>
           </div>
-
-          {/* Kitchen orders indicator */}
-          {hasOpenOrders && (
-            <button
-              onClick={onViewOrders}
-              className="mt-2.5 w-full flex items-center justify-between bg-muted rounded-xl px-3.5 py-2.5 active:opacity-70 transition-opacity"
-            >
-              <div className="flex items-center gap-2.5">
-                <span
-                  className="w-2 h-2 rounded-full bg-status-yellow"
-                  style={{ boxShadow: "0 0 6px #F59E0B" }}
-                />
-                <span className="text-foreground" style={{ fontSize: "0.82rem", fontWeight: 600 }}>
-                  {kitchenSends > 0
-                    ? `${kitchenSends} envío${kitchenSends !== 1 ? "s" : ""} · Cuenta Ronda ${openReceiptCycle}`
-                    : `Cuenta Ronda ${openReceiptCycle}`}
-                </span>
-              </div>
-              <div className="flex items-center gap-1 text-primary">
-                <div>
-                  <span style={{ fontSize: "0.78rem", fontWeight: 700, display: "block" }}>Ver pedidos</span>
-                  <span style={{ fontSize: "0.62rem", opacity: 0.75 }}>View Orders</span>
-                </div>
-                <ChevronDown size={14} style={{ transform: "rotate(-90deg)" }} />
-              </div>
-            </button>
-          )}
         </div>
 
         {/* Category tabs */}
@@ -256,7 +236,7 @@ export default function MenuScreen({
         style={{ WebkitOverflowScrolling: "touch" }}
       >
         {CATEGORIES.map((cat) => {
-          const items = MENU_ITEMS.filter((i) => i.category === cat.id)
+          const items = menuItems.filter((i) => i.category === cat.id)
           return (
             <div
               key={cat.id}
@@ -289,6 +269,8 @@ export default function MenuScreen({
                     cartQty={cart
                       .filter((c) => c.menuItemId === item.id)
                       .reduce((s, c) => s + c.quantity, 0)}
+                    previewMode={previewMode}
+                    showUsd={showUsd}
                   />
                 ))}
               </div>
@@ -301,17 +283,17 @@ export default function MenuScreen({
       </div>
 
       {/* ── Floating cart button ──────────────────────────────────────── */}
-      {(cartCount > 0 || hasOpenOrders) && (
+      {(cartCount > 0 || hasSentOrders) && (
         <div className="absolute bottom-0 left-0 w-full px-4 pb-4 safe-bottom z-40 pointer-events-none">
           <button
-            onClick={cartCount > 0 ? onOpenCart : onViewOrders}
+            onClick={cartCount > 0 && !previewMode ? onOpenCart : onViewOrders}
             className="pointer-events-auto w-full flex items-center justify-between bg-primary text-primary-foreground px-5 rounded-2xl shadow-lg active:scale-[0.98] transition-transform"
             style={{ minHeight: "58px", fontFamily: "Outfit, sans-serif" }}
           >
             <div className="flex items-center gap-3">
               <div className="relative">
                 <ShoppingCart size={22} />
-                {(cartCount > 0 || hasOpenOrders) && (
+                {(cartCount > 0 || hasSentOrders) && (
                   <span
                     className="absolute -top-2 -right-2 bg-white text-primary w-5 h-5 rounded-full flex items-center justify-center badge-pop"
                     style={{ fontSize: "0.65rem", fontWeight: 800 }}
@@ -322,20 +304,22 @@ export default function MenuScreen({
               </div>
               <div>
                 <span style={{ fontWeight: 700, fontSize: "1rem", display: "block" }}>
-                  {cartCount > 0 ? "Ver carrito" : "Ver mi orden"}
+                  {previewMode ? "Ver pedidos de la mesa" : cartCount > 0 ? "Ver carrito" : "Ver mi orden"}
                 </span>
                 <span style={{ fontSize: "0.65rem", opacity: 0.8 }}>
-                  {cartCount > 0 ? "View Cart" : "View My Order"}
+                  {previewMode ? "Staff preview" : cartCount > 0 ? "View Cart" : "View My Order"}
                 </span>
               </div>
             </div>
             <div className="flex flex-col items-end">
               <span style={{ fontWeight: 800, fontSize: "1.05rem" }}>
-                {formatCRC(cartCount > 0 ? cartTotal : billTotal)}
+                {formatCRC(floatingAmount)}
               </span>
-              <span style={{ fontSize: "0.72rem", opacity: 0.85 }}>
-                {formatUSD(cartCount > 0 ? cartTotal : billTotal, restaurant.exchangeRate)}
-              </span>
+              {showUsd && (
+                <span style={{ fontSize: "0.72rem", opacity: 0.85 }}>
+                  {formatUSD(floatingAmount, restaurant.exchangeRate)}
+                </span>
+              )}
             </div>
           </button>
         </div>
@@ -352,9 +336,11 @@ interface MenuItemCardProps {
   onImgError: () => void
   onAdd: () => void
   cartQty: number
+  previewMode?: boolean
+  showUsd?: boolean
 }
 
-function MenuItemCard({ item, exchangeRate, imgError, onImgError, onAdd, cartQty }: MenuItemCardProps) {
+function MenuItemCard({ item, exchangeRate, imgError, onImgError, onAdd, cartQty, previewMode = false, showUsd = true }: MenuItemCardProps) {
   return (
     <div className="bg-card rounded-2xl overflow-hidden border border-border flex gap-0 shadow-sm">
       {/* Image */}
@@ -363,7 +349,7 @@ function MenuItemCard({ item, exchangeRate, imgError, onImgError, onAdd, cartQty
           <img
             src={item.image}
             alt={item.name}
-            className="w-full h-full object-cover"
+            style={menuItemImageStyle(item)}
             onError={onImgError}
           />
         ) : (
@@ -410,29 +396,35 @@ function MenuItemCard({ item, exchangeRate, imgError, onImgError, onAdd, cartQty
             >
               {formatCRC(item.price)}
             </span>
-            <span className="text-muted-foreground ml-1.5" style={{ fontSize: "0.72rem" }}>
-              {formatUSD(item.price, exchangeRate)}
-            </span>
+            {showUsd && (
+              <span className="text-muted-foreground ml-1.5" style={{ fontSize: "0.72rem" }}>
+                {formatUSD(item.price, exchangeRate)}
+              </span>
+            )}
           </div>
 
-          <button
-            onClick={onAdd}
-            className={`flex items-center gap-1 px-3.5 py-2 rounded-xl transition-all active:scale-95 ${
-              cartQty > 0
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted text-foreground"
-            }`}
-            style={{ minHeight: "36px", fontWeight: 700, fontSize: "0.82rem" }}
-          >
-            {cartQty > 0 ? (
-              <>
-                <ShoppingCart size={14} />
-                <span>{cartQty}</span>
-              </>
-            ) : (
-              <span style={{ lineHeight: 1 }}>+ Agregar <span style={{ fontSize: "0.65em", opacity: 0.75, display: "block" }}>Add</span></span>
-            )}
-          </button>
+          {!previewMode ? (
+            <button
+              onClick={onAdd}
+              className={`flex items-center gap-1 px-3.5 py-2 rounded-xl transition-all active:scale-95 ${
+                cartQty > 0
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted text-foreground"
+              }`}
+              style={{ minHeight: "36px", fontWeight: 700, fontSize: "0.82rem" }}
+            >
+              {cartQty > 0 ? (
+                <>
+                  <ShoppingCart size={14} />
+                  <span>{cartQty}</span>
+                </>
+              ) : (
+                <span style={{ lineHeight: 1 }}>+ Agregar <span style={{ fontSize: "0.65em", opacity: 0.75, display: "block" }}>Add</span></span>
+              )}
+            </button>
+          ) : cartQty > 0 ? (
+            <span className="text-caption text-muted-foreground font-semibold">{cartQty} en carrito</span>
+          ) : null}
         </div>
       </div>
     </div>

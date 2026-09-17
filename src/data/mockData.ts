@@ -7,7 +7,7 @@ const minsAgo = (m: number) => new Date(now.getTime() - m * 60000)
 
 // ── Tables ───────────────────────────────────────────────────────────────────
 export type TableStatus = "available" | "open" | "processing" | "closed"
-export type TableSection = "main" | "bar" | "private" | "terrace"
+export type TableSection = string
 
 export interface TableRecord {
   id: string
@@ -155,6 +155,8 @@ export interface StaffMember {
   id: string
   name: string
   role: "server" | "bartender" | "cashier" | "manager"
+  /** Personal 4-digit PIN for clock-in (demo fixtures). */
+  pin: string
   tables: number[]
   tipsToday: number
   salesTotal: number
@@ -163,10 +165,10 @@ export interface StaffMember {
 }
 
 export const STAFF: StaffMember[] = [
-  { id: "s1", name: "María García", role: "server", tables: [1, 2, 3, 4], tipsToday: 18200, salesTotal: 176800, avgRating: 4.8, covers: 22 },
-  { id: "s2", name: "Carlos Jiménez", role: "server", tables: [5, 6, 7, 8, 13, 14], tipsToday: 21500, salesTotal: 198400, avgRating: 4.6, covers: 28 },
-  { id: "s3", name: "Ana Vargas", role: "bartender", tables: [9, 10, 11, 12, 15, 16], tipsToday: 14800, salesTotal: 124200, avgRating: 4.9, covers: 18 },
-  { id: "s4", name: "Luis Mora", role: "manager", tables: [], tipsToday: 0, salesTotal: 0, avgRating: 0, covers: 0 },
+  { id: "s1", name: "María García", role: "server", pin: "4821", tables: [1, 2, 3, 4], tipsToday: 18200, salesTotal: 176800, avgRating: 4.8, covers: 22 },
+  { id: "s2", name: "Carlos Jiménez", role: "server", pin: "7392", tables: [5, 6, 7, 8, 13, 14], tipsToday: 21500, salesTotal: 198400, avgRating: 4.6, covers: 28 },
+  { id: "s3", name: "Ana Vargas", role: "bartender", pin: "9156", tables: [9, 10, 11, 12, 15, 16], tipsToday: 14800, salesTotal: 124200, avgRating: 4.9, covers: 18 },
+  { id: "s4", name: "Luis Mora", role: "manager", pin: "0000", tables: [], tipsToday: 0, salesTotal: 0, avgRating: 0, covers: 0 },
 ]
 
 // ── Daily Sales (7-day) ───────────────────────────────────────────────────────
@@ -237,12 +239,6 @@ export const INITIAL_GUARDIAN_QUEUE: GuardianOrder[] = [
 ]
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-export function formatCRCShort(n: number): string {
-  if (n >= 1000000) return `₡${(n / 1000000).toFixed(1)}M`
-  if (n >= 1000) return `₡${(n / 1000).toFixed(0)}K`
-  return `₡${n}`
-}
-
 export function elapsedMins(date: Date): number {
   return Math.floor((Date.now() - date.getTime()) / 60000)
 }

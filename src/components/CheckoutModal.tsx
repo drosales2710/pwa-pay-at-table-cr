@@ -4,17 +4,19 @@ import type { InvoiceType, TaxConfig } from "../types"
 import { formatCRC, formatUSD } from "../utils/format"
 import { calculateTaxBreakdown } from "../utils/tax"
 
+type CheckoutTender = "apple" | "google" | "card"
+
 interface CheckoutModalProps {
   subtotal: number
   taxConfig: TaxConfig
   tipAmount: number
   total: number
   onClose: () => void
-  onSuccess: () => void
+  onSuccess: (method: CheckoutTender) => void
 }
 
 type PaymentStep = "select" | "processing" | "done"
-type PaymentMethod = "apple" | "google" | "card" | null
+type PaymentMethod = CheckoutTender | null
 
 export default function CheckoutModal({
   subtotal,
@@ -46,7 +48,7 @@ export default function CheckoutModal({
     setTimeout(() => {
       setStep("done")
       setTimeout(() => {
-        onSuccess()
+        if (method) onSuccess(method)
       }, 600)
     }, 1800)
   }

@@ -154,7 +154,7 @@ export default function ModifierModal({ item, onClose, onConfirm }: ModifierModa
                 </span>
                 {group.required && (
                   <span
-                    className="bg-primary/10 text-primary px-2 py-0.5 rounded-full"
+                    className="bg-primary/10 text-primary-on-light px-2 py-0.5 rounded-full"
                     style={{ fontSize: "0.65rem", fontWeight: 700 }}
                   >
                     Requerido
