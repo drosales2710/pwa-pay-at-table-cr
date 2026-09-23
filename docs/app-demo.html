@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Live demo — Costa Rica pay-at-table PWA</title>
+  <meta name="description" content="Interactive demo guide for the Costa Rica pay-at-table restaurant PWA: guest ordering, server floor, kitchen/bar KDS, cashier, and admin portals." />
+  <style>
+    :root {
+      --paper: #f0f4f0;
+      --paper-2: #fcfefc;
+      --ink: #142018;
+      --ink-soft: #3d4f42;
+      --muted: #66756a;
+      --line: #d4ddd6;
+      --line-strong: #b8c9bc;
+      --green: #166534;
+      --green-bg: #e8f3ea;
+      --green-dark: #14532d;
+      --gold: #92400e;
+      --gold-bg: #f8f0dc;
+      --danger: #991b1b;
+      --danger-bg: #f8e8e6;
+      --info: #1e3a5f;
+      --info-bg: #e7eef6;
+      --accent: #0f766e;
+      --accent-bg: #e6f4f2;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(900px 420px at 0% -5%, #dceee0 0%, transparent 55%),
+        var(--paper);
+      font-family: "Avenir Next", "Segoe UI", system-ui, sans-serif;
+      font-size: 17px;
+      line-height: 1.55;
+    }
+
+    a { color: var(--green-dark); }
+
+    .wrap { width: min(1040px, calc(100% - 40px)); margin: 0 auto; }
+
+    header.hero { padding: 44px 0 8px; }
+
+    .eyebrow {
+      margin: 0 0 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      font-size: 12px;
+      font-weight: 650;
+      color: var(--accent);
+    }
+
+    h1 {
+      margin: 0 0 12px;
+      font-family: "Iowan Old Style", Palatino, Georgia, serif;
+      font-size: clamp(34px, 5vw, 50px);
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      line-height: 1.05;
+    }
+
+    .lede { margin: 0; max-width: 70ch; color: var(--ink-soft); font-size: 18px; }
+    .meta { margin: 14px 0 0; color: var(--muted); font-size: 14px; }
+
+    nav.toc {
+      position: sticky;
+      top: 0;
+      z-index: 4;
+      margin-top: 24px;
+      background: rgba(240, 244, 240, 0.92);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--line);
+    }
+
+    nav.toc .wrap {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      padding: 10px 0;
+    }
+
+    nav.toc a {
+      text-decoration: none;
+      color: var(--ink);
+      font-size: 14px;
+      font-weight: 600;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+    }
+
+    nav.toc a:hover { background: var(--paper-2); border-color: var(--line); }
+
+    main { padding: 28px 0 72px; }
+    section { margin-top: 40px; }
+
+    h2 {
+      margin: 0 0 12px;
+      font-family: "Iowan Old Style", Palatino, Georgia, serif;
+      font-size: 28px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+
+    h3 { margin: 24px 0 10px; font-size: 18px; font-weight: 700; }
+    p { margin: 0 0 12px; }
+
+    .callout {
+      border: 1px solid var(--line-strong);
+      border-left-width: 4px;
+      background: var(--paper-2);
+      border-radius: 10px;
+      padding: 14px 16px;
+      margin: 16px 0;
+    }
+
+    .callout strong { display: block; margin-bottom: 4px; }
+    .callout.warning { border-left-color: var(--gold); background: var(--gold-bg); }
+    .callout.info { border-left-color: var(--info); background: var(--info-bg); }
+    .callout.success { border-left-color: var(--green); background: var(--green-bg); }
+    .callout.danger { border-left-color: var(--danger); background: var(--danger-bg); }
+
+    .launch-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: end;
+      background: var(--paper-2);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin: 18px 0;
+    }
+
+    .launch-bar label {
+      display: block;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    .launch-bar input {
+      width: min(360px, 100%);
+      padding: 10px 12px;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      font: inherit;
+      background: white;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: white;
+    }
+
+    .status-pill .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--muted);
+    }
+
+    .status-pill.online .dot { background: #16a34a; }
+    .status-pill.offline .dot { background: #dc2626; }
+
+    .btn-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 700;
+      padding: 10px 14px;
+      border-radius: 10px;
+      border: 1px solid transparent;
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    .btn.primary { background: var(--green-dark); color: white; }
+    .btn.primary:hover { background: var(--green); }
+    .btn.secondary { background: white; color: var(--ink); border-color: var(--line-strong); }
+    .btn.secondary:hover { background: var(--paper); }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .portal-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 14px;
+      margin-top: 8px;
+    }
+
+    .portal-card {
+      background: var(--paper-2);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .portal-card img {
+      width: 100%;
+      height: 180px;
+      object-fit: cover;
+      object-position: top center;
+      border-bottom: 1px solid var(--line);
+      background: #eef2ee;
+    }
+
+    .portal-card .body { padding: 12px 14px 14px; flex: 1; display: flex; flex-direction: column; }
+
+    .portal-card h3 {
+      margin: 0 0 6px;
+      font-size: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .tag {
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 3px 7px;
+      border-radius: 999px;
+      background: var(--accent-bg);
+      color: var(--accent);
+      white-space: nowrap;
+    }
+
+    .portal-card p { font-size: 14px; color: var(--ink-soft); margin: 0 0 10px; flex: 1; }
+    .portal-card .btn { align-self: flex-start; }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--paper-2);
+    }
+
+    table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+    th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+    th {
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+      background: #f7faf7;
+    }
+    tr:last-child td { border-bottom: 0; }
+    tbody tr:nth-child(even) td { background: #fbfdfb; }
+    code, .mono {
+      font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+      font-size: 0.86em;
+    }
+
+    ol.flow { margin: 0; padding-left: 22px; }
+    ol.flow li { margin: 0 0 10px; }
+
+    .steps-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 12px;
+    }
+
+    .step {
+      background: var(--paper-2);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px;
+    }
+
+    .step .num {
+      display: inline-grid;
+      place-items: center;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: var(--green-dark);
+      color: white;
+      font-size: 13px;
+      font-weight: 800;
+      margin-bottom: 8px;
+    }
+
+    .step strong { display: block; margin-bottom: 4px; font-size: 15px; }
+    .step p { font-size: 14px; color: var(--ink-soft); margin: 0; }
+
+    .live-frame {
+      margin-top: 14px;
+      border: 1px solid var(--line-strong);
+      border-radius: 12px;
+      overflow: hidden;
+      background: white;
+      display: none;
+    }
+
+    .live-frame.visible { display: block; }
+
+    .live-frame header {
+      padding: 10px 14px;
+      background: #f7faf7;
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--muted);
+    }
+
+    .live-frame iframe {
+      width: 100%;
+      height: min(720px, 80vh);
+      border: 0;
+      background: white;
+    }
+
+    footer {
+      border-top: 1px solid var(--line);
+      padding: 22px 0 40px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 760px) {
+      body { font-size: 16px; }
+      .portal-card img { height: 150px; }
+    }
+
+    @media print {
+      nav.toc, .launch-bar, .live-frame, .btn-row { display: none; }
+      .portal-card { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="wrap">
+      <p class="eyebrow">La Terraza · prototype demo</p>
+      <h1>Pay-at-table PWA — live demo guide</h1>
+      <p class="lede">
+        Interactive walkthrough of the app as it works today: guest QR ordering,
+        server floor, kitchen and bar KDS, cashier, and admin — all wired through
+        one in-browser session on table 7.
+      </p>
+      <p class="meta">September 23, 2026 · Screenshots + runnable demo package included</p>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="Sections">
+    <div class="wrap">
+      <a href="#start">Start demo</a>
+      <a href="#portals">Portals</a>
+      <a href="#walkthrough">Walkthrough</a>
+      <a href="#credentials">PINs</a>
+      <a href="#share">Share</a>
+      <a href="#notes">Notes</a>
+    </div>
+  </nav>
+
+  <main>
+    <div class="wrap">
+      <section id="start">
+        <h2>Start the demo</h2>
+
+        <div class="launch-bar">
+          <div>
+            <label for="base-url">Demo server URL</label>
+            <input id="base-url" type="url" value="https://drosales2710.github.io/pwa-pay-at-table-cr/demo" spellcheck="false" />
+          </div>
+          <div id="server-status" class="status-pill offline" aria-live="polite">
+            <span class="dot"></span>
+            <span>Checking server…</span>
+          </div>
+        </div>
+
+        <div class="callout success">
+          <strong>Public demo (no install)</strong>
+          Live at
+          <a id="public-demo-link" href="https://drosales2710.github.io/pwa-pay-at-table-cr/demo/#/m/7" target="_blank" rel="noopener">
+            drosales2710.github.io/pwa-pay-at-table-cr/demo
+          </a>
+          — runs in the browser with demo data. No backend server required; staff PINs still work offline.
+        </div>
+
+        <div class="callout info">
+          <strong>Local dev (optional)</strong>
+          For the API server (device registry, audit log): <code>npm run build && npm start</code>
+          on port <strong>8443</strong>, then switch the URL above to <code>http://localhost:8443</code>.
+        </div>
+
+        <div class="btn-row">
+          <a class="btn primary" id="open-guest" href="https://drosales2710.github.io/pwa-pay-at-table-cr/demo/#/m/7" target="_blank" rel="noopener">Open guest (table 7)</a>
+          <a class="btn secondary" id="open-staff" href="https://drosales2710.github.io/pwa-pay-at-table-cr/demo/#/staff/login" target="_blank" rel="noopener">Staff login</a>
+          <button class="btn secondary" type="button" id="toggle-live">Show live preview</button>
+        </div>
+
+        <div class="live-frame" id="live-frame">
+          <header>Live preview — guest menu (requires demo server running)</header>
+          <iframe id="live-iframe" title="Guest menu live preview" loading="lazy"></iframe>
+        </div>
+
+        <div class="callout warning">
+          <strong>Prototype limitation</strong>
+          Guest, kitchen, bar, server, and admin only stay in sync while they share
+          the same browser session. A second phone or tablet will not see live orders
+          until a real backend ships. Payments are simulated — no real charges.
+        </div>
+      </section>
+
+      <section id="portals">
+        <h2>All portals</h2>
+        <p>Click <strong>Open</strong> after the demo server is running. Log in with the PINs in the table below.</p>
+
+        <div class="portal-grid">
+          <article class="portal-card">
+            <img src="demo-assets/guest-qr.png" alt="Guest QR landing for table 7" width="430" height="920" />
+            <div class="body">
+              <h3>Guest PWA <span class="tag">Phone</span></h3>
+              <p>Scan-style entry at table 7. Join the table, browse the menu, send rounds to kitchen/bar, split the bill, and pay (simulated).</p>
+              <a class="btn primary portal-link" data-hash="#/m/7" href="#">Open guest</a>
+            </div>
+          </article>
+
+          <article class="portal-card">
+            <img src="demo-assets/staff-login.png" alt="Staff login screen" width="430" height="920" />
+            <div class="body">
+              <h3>Staff login <span class="tag">PIN</span></h3>
+              <p>Single sign-in for servers, kitchen, bar, cashier, and managers. Routes you to the right portal by role.</p>
+              <a class="btn primary portal-link" data-hash="#/staff/login" href="#">Open login</a>
+            </div>
+          </article>
+
+          <article class="portal-card">
+            <img src="demo-assets/server-floor.png" alt="Server floor plan" width="1280" height="800" />
+            <div class="body">
+              <h3>Server floor <span class="tag">4821</span></h3>
+              <p>Floor plan with live table 7 session. Seat guests, view cart, guardian queue, present bill, void items.</p>
+              <a class="btn primary portal-link" data-hash="#/server/floor-plan" href="#">Open floor</a>
+            </div>
+          </article>
+
+          <article class="portal-card">
+            <img src="demo-assets/kitchen-kds.png" alt="Kitchen KDS tickets" width="1280" height="800" />
+            <div class="body">
+              <h3>Kitchen KDS <span class="tag">2847</span></h3>
+              <p>Food tickets from send-to-kitchen. Advance pending → preparing → ready → delivered. Device pairing on first use.</p>
+              <a class="btn primary portal-link" data-hash="#/kds/kitchen" href="#">Open kitchen</a>
+            </div>
+          </article>
+
+          <article class="portal-card">
+            <img src="demo-assets/kitchen-kds.png" alt="Bar KDS (same layout as kitchen)" width="1280" height="800" />
+            <div class="body">
+              <h3>Bar KDS <span class="tag">9156</span></h3>
+              <p>Drinks and bar items routed by menu category. Same ticket flow as kitchen on a separate station.</p>
+              <a class="btn primary portal-link" data-hash="#/kds/bar" href="#">Open bar</a>
+            </div>
+          </article>
+
+          <article class="portal-card">
+            <img src="demo-assets/admin-dashboard.png" alt="Admin dashboard" width="1280" height="800" />
+            <div class="body">
+              <h3>Cashier &amp; admin <span class="tag">5638 / 0000</span></h3>
+              <p>Cashier POS for table 7 payments. Admin dashboard, menu builder, QR tables, reports, team, settings. Manager PIN unlocks portal switcher.</p>
+              <a class="btn secondary portal-link" data-hash="#/kds/cashier" href="#">Cashier</a>
+              <a class="btn primary portal-link" data-hash="#/admin/dashboard" href="#" style="margin-top:8px">Admin</a>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="walkthrough">
+        <h2>Suggested 10-minute walkthrough</h2>
+        <div class="steps-grid">
+          <div class="step"><span class="num">1</span><strong>Guest joins table 7</strong><p>Open guest link, enter a name, land on the menu.</p></div>
+          <div class="step"><span class="num">2</span><strong>Order food + drinks</strong><p>Add a main and a cocktail. Send to kitchen — items split to kitchen vs bar KDS.</p></div>
+          <div class="step"><span class="num">3</span><strong>Kitchen &amp; bar bump</strong><p>Log in as kitchen (2847) and bar (9156). Advance tickets through the flow.</p></div>
+          <div class="step"><span class="num">4</span><strong>Server view</strong><p>Log in as server (4821). Open table 7 on the floor plan — see the live cart.</p></div>
+          <div class="step"><span class="num">5</span><strong>Guardian (optional)</strong><p>Order alcohol or high-value items to trigger manager approval (PIN 0000).</p></div>
+          <div class="step"><span class="num">6</span><strong>Pay at table</strong><p>Guest checkout — Apple Pay / card / split bill (simulated 1.8s delay).</p></div>
+          <div class="step"><span class="num">7</span><strong>Cashier</strong><p>Cashier portal (5638) shows today’s payments for table 7.</p></div>
+          <div class="step"><span class="num">8</span><strong>Admin</strong><p>Manager (0000): portal switcher jumps between all UIs without re-login.</p></div>
+        </div>
+
+        <h3>Manager shortcut</h3>
+        <p>
+          After logging in with PIN <strong>0000</strong>, use the colored
+          <strong>Portal Switcher</strong> button (top-right on most screens) to
+          jump Guest → Server → Kitchen → Bar → Cashier → Admin instantly.
+        </p>
+      </section>
+
+      <section id="credentials">
+        <h2>Demo credentials</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Role</th>
+                <th>Name</th>
+                <th>PIN</th>
+                <th>Opens</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>Manager</td><td>Luis Mora</td><td><code>0000</code></td><td>Admin + portal switcher + guardian overrides</td></tr>
+              <tr><td>Server</td><td>María García</td><td><code>4821</code></td><td>Floor plan, table details, shift closing</td></tr>
+              <tr><td>Server</td><td>Carlos Jiménez</td><td><code>7392</code></td><td>Floor plan (alternate server)</td></tr>
+              <tr><td>Kitchen</td><td>Roberto Solís</td><td><code>2847</code></td><td>Kitchen KDS (+ device setup on first visit)</td></tr>
+              <tr><td>Bartender</td><td>Ana Vargas</td><td><code>9156</code></td><td>Bar KDS</td></tr>
+              <tr><td>Cashier</td><td>Elena Castro</td><td><code>5638</code></td><td>Cashier POS</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="caption" style="color:var(--muted);font-size:13px;margin-top:8px">
+          PINs are demo-only and stored in plaintext locally. Never use in production.
+        </p>
+      </section>
+
+      <section id="share">
+        <h2>Share with others</h2>
+        <div class="callout success">
+          <strong>Files to send</strong>
+          Attach or zip these from the <code>docs/</code> folder:
+          <ul style="margin:8px 0 0;padding-left:20px">
+            <li><code>app-demo.html</code> — this guide (works offline; links need a running server)</li>
+            <li><code>demo-assets/</code> — portal screenshots referenced above</li>
+            <li><code>costa-rica-pat-demo.zip</code> — runnable demo (~550 KB): built app + local API + README</li>
+          </ul>
+        </div>
+
+        <h3>Recipient instructions</h3>
+        <ol class="flow">
+          <li>Unzip <code>costa-rica-pat-demo.zip</code></li>
+          <li>Install Node.js 22+ if needed</li>
+          <li>Run <code>./start-demo.sh</code> (macOS/Linux) or <code>npm start</code> inside the folder</li>
+          <li>Open <code>app-demo.html</code> and click <strong>Open guest (table 7)</strong></li>
+        </ol>
+
+        <div class="callout info">
+          <strong>No public URL by default</strong>
+          This demo runs on the recipient's machine at <code>localhost:8443</code>.
+          To demo over the internet temporarily, tunnel port 8443 (e.g. ngrok) and paste
+          the HTTPS URL into the <strong>Demo server URL</strong> field at the top.
+        </div>
+      </section>
+
+      <section id="notes">
+        <h2>What works vs what is simulated</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Feature</th><th>Demo behavior</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Menu, cart, send-to-kitchen</td><td>Full flow on table 7; kitchen/bar ticket split by category</td></tr>
+              <tr><td>Guardian (alcohol / price / qty)</td><td>Approve or reject with manager PIN; reject rolls back sent lines</td></tr>
+              <tr><td>Split bill</td><td>Full, equal, or pay-my-items with FIFO settlement</td></tr>
+              <tr><td>Staff auth + KDS devices</td><td>Local API (<code>/api/v1</code>) with JSON file store; falls back to localStorage if server is down</td></tr>
+              <tr><td>Payments</td><td>Simulated — 1.8s delay, no PSP, no SINPE capture</td></tr>
+              <tr><td>Multi-device</td><td>Not supported — one browser tab is the whole restaurant</td></tr>
+              <tr><td>Hacienda invoices</td><td>UI fields only; not persisted or transmitted</td></tr>
+              <tr><td>Admin historic reports</td><td>Today is live; prior days use demo fixtures</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p style="margin-top:16px">
+          For backend gaps and production roadmap, see
+          <a href="backend-readiness-review.html">backend-readiness-review.html</a>.
+        </p>
+      </section>
+    </div>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      Costa Rica pay-at-table PWA · interactive prototype demo · September 23, 2026
+    </div>
+  </footer>
+
+  <script>
+    (function () {
+      var input = document.getElementById("base-url");
+      var statusEl = document.getElementById("server-status");
+      var liveFrame = document.getElementById("live-frame");
+      var liveIframe = document.getElementById("live-iframe");
+      var toggleBtn = document.getElementById("toggle-live");
+      var portalLinks = document.querySelectorAll(".portal-link");
+      var openGuest = document.getElementById("open-guest");
+      var openStaff = document.getElementById("open-staff");
+
+      function base() {
+        var v = (input.value || "").trim().replace(/\/+$/, "");
+        return v || "http://localhost:8443";
+      }
+
+      function appUrl(hash) {
+        return base() + (hash.charAt(0) === "#" ? hash : "#" + hash);
+      }
+
+      function refreshLinks() {
+        var guest = appUrl("#/m/7");
+        var staff = appUrl("#/staff/login");
+        openGuest.href = guest;
+        openStaff.href = staff;
+        portalLinks.forEach(function (a) {
+          a.href = appUrl(a.getAttribute("data-hash"));
+          a.target = "_blank";
+          a.rel = "noopener";
+        });
+        if (liveFrame.classList.contains("visible")) {
+          liveIframe.src = appUrl("#/menu");
+        }
+      }
+
+      async function checkServer() {
+        var url = base();
+        statusEl.className = "status-pill offline";
+        statusEl.querySelector("span:last-child").textContent = "Checking…";
+        try {
+          var res = await fetch(url + "/api/v1/auth/session", {
+            method: "GET",
+            headers: { Authorization: "Bearer probe" },
+            mode: "cors",
+          });
+          if (res.status === 401 || res.status === 200) {
+            statusEl.className = "status-pill online";
+            statusEl.querySelector("span:last-child").textContent = "Demo server online";
+            toggleBtn.disabled = false;
+            return;
+          }
+        } catch (e) { /* offline */ }
+        statusEl.className = "status-pill offline";
+        statusEl.querySelector("span:last-child").textContent = "Demo server offline — run npm start";
+        toggleBtn.disabled = true;
+        liveFrame.classList.remove("visible");
+      }
+
+      input.addEventListener("change", function () {
+        refreshLinks();
+        checkServer();
+      });
+      input.addEventListener("input", refreshLinks);
+
+      toggleBtn.addEventListener("click", function () {
+        if (toggleBtn.disabled) return;
+        var show = !liveFrame.classList.contains("visible");
+        liveFrame.classList.toggle("visible", show);
+        toggleBtn.textContent = show ? "Hide live preview" : "Show live preview";
+        if (show) liveIframe.src = appUrl("#/menu");
+        else liveIframe.src = "about:blank";
+      });
+
+      refreshLinks();
+      checkServer();
+      setInterval(checkServer, 15000);
+    })();
+  </script>
+</body>
+</html>

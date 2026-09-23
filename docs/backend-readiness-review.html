@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Backend readiness review — Costa Rica pay-at-table PWA</title>
+  <meta name="description" content="Engineering review of the Costa Rica pay-at-table PWA: domain is largely designed; there is no production backend, no shared live state across devices, and payments are simulated." />
+  <style>
+    :root {
+      --paper: #f3efe6;
+      --paper-2: #fffdf8;
+      --ink: #1c1915;
+      --ink-soft: #4a433a;
+      --muted: #6f675c;
+      --line: #ddd4c4;
+      --line-strong: #c9beab;
+      --terracotta: #9a3412;
+      --terracotta-bg: #f8ebe3;
+      --forest: #14532d;
+      --forest-bg: #e7f3ea;
+      --gold: #92400e;
+      --gold-bg: #f8f0dc;
+      --danger: #991b1b;
+      --danger-bg: #f8e8e6;
+      --info: #1e3a5f;
+      --info-bg: #e7eef6;
+      --bar-track: #e7e0d4;
+      --shadow: 0 1px 0 rgba(28, 25, 21, 0.04);
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 480px at 100% -10%, #efe4d2 0%, transparent 55%),
+        var(--paper);
+      font-family: "Avenir Next", "Segoe UI", system-ui, sans-serif;
+      font-size: 17px;
+      line-height: 1.55;
+    }
+
+    a { color: var(--terracotta); }
+
+    .wrap {
+      width: min(980px, calc(100% - 40px));
+      margin: 0 auto;
+    }
+
+    header.hero {
+      padding: 48px 0 8px;
+    }
+
+    .eyebrow {
+      margin: 0 0 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      font-size: 12px;
+      font-weight: 650;
+      color: var(--terracotta);
+    }
+
+    h1 {
+      margin: 0 0 12px;
+      font-family: "Iowan Old Style", Palatino, "Palatino Linotype", Georgia, serif;
+      font-size: clamp(36px, 5vw, 52px);
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      line-height: 1.05;
+    }
+
+    .lede {
+      margin: 0;
+      max-width: 68ch;
+      color: var(--ink-soft);
+      font-size: 18px;
+    }
+
+    .meta {
+      margin: 14px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    nav.toc {
+      position: sticky;
+      top: 0;
+      z-index: 4;
+      margin-top: 28px;
+      background: rgba(243, 239, 230, 0.92);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--line);
+    }
+
+    nav.toc .wrap {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      padding: 10px 0;
+    }
+
+    nav.toc a {
+      text-decoration: none;
+      color: var(--ink);
+      font-size: 14px;
+      font-weight: 600;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+    }
+
+    nav.toc a:hover {
+      background: var(--paper-2);
+      border-color: var(--line);
+    }
+
+    main { padding: 28px 0 72px; }
+
+    section { margin-top: 42px; }
+
+    h2 {
+      margin: 0 0 12px;
+      font-family: "Iowan Old Style", Palatino, "Palatino Linotype", Georgia, serif;
+      font-size: 30px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+
+    h3 {
+      margin: 28px 0 10px;
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    p { margin: 0 0 12px; }
+
+    .callout {
+      border: 1px solid var(--line-strong);
+      border-left-width: 4px;
+      background: var(--paper-2);
+      border-radius: 10px;
+      padding: 14px 16px;
+      margin: 18px 0;
+    }
+
+    .callout strong { display: block; margin-bottom: 4px; }
+
+    .callout.warning { border-left-color: var(--gold); background: var(--gold-bg); }
+    .callout.danger { border-left-color: var(--danger); background: var(--danger-bg); }
+    .callout.info { border-left-color: var(--info); background: var(--info-bg); }
+    .callout.update { border-left-color: var(--forest); background: var(--forest-bg); }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin: 18px 0 8px;
+    }
+
+    .stat {
+      background: var(--paper-2);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px 14px 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .stat .value {
+      font-family: "Iowan Old Style", Palatino, Georgia, serif;
+      font-size: 32px;
+      line-height: 1;
+      letter-spacing: -0.03em;
+    }
+
+    .stat .label {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .stat.warn .value { color: var(--gold); }
+    .stat.danger .value { color: var(--danger); }
+    .stat.info .value { color: var(--info); }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-top: 8px;
+    }
+
+    .card {
+      background: var(--paper-2);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .card h3 {
+      margin: 0;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      font-size: 16px;
+    }
+
+    .card ul {
+      margin: 0;
+      padding: 12px 14px 14px 30px;
+    }
+
+    .card li { margin: 0 0 8px; }
+    .card li:last-child { margin-bottom: 0; }
+
+    .pill {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      border-radius: 999px;
+      padding: 3px 8px;
+      border: 1px solid var(--line-strong);
+      background: var(--paper);
+      white-space: nowrap;
+    }
+
+    .pill.keep { color: var(--forest); background: var(--forest-bg); border-color: #b7d7c0; }
+    .pill.replace { color: var(--ink-soft); }
+    .pill.split, .pill.warning { color: var(--gold); background: var(--gold-bg); border-color: #ead7a4; }
+    .pill.danger, .pill.simulated, .pill.mismatch, .pill.dead, .pill.client { color: var(--danger); background: var(--danger-bg); border-color: #ecc8c4; }
+    .pill.cosmetic, .pill.types, .pill.admin, .pill.hardcoded, .pill.hybrid, .pill.prototype { color: var(--info); background: var(--info-bg); border-color: #c9d7e8; }
+
+    .stack-bars { display: flex; flex-direction: column; gap: 10px; margin: 8px 0 6px; }
+
+    .bar-row { display: grid; grid-template-columns: minmax(180px, 280px) 1fr 48px; gap: 10px; align-items: center; }
+    .bar-row .name { font-size: 14px; color: var(--ink-soft); }
+    .bar-row .pct { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 14px; text-align: right; }
+
+    .track {
+      height: 10px;
+      background: var(--bar-track);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .fill { height: 100%; border-radius: 999px; }
+    .fill.green { background: #166534; }
+    .fill.blue { background: #1d4ed8; }
+    .fill.yellow { background: #b45309; }
+    .fill.orange { background: #c2410c; }
+    .fill.red { background: #b91c1c; width: 0; }
+    .fill.zero { width: 2px; background: #b91c1c; }
+
+    .composite {
+      display: flex;
+      height: 16px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: var(--bar-track);
+      margin: 8px 0 6px;
+    }
+
+    .composite span { display: block; height: 100%; }
+    .legend { display: flex; flex-wrap: wrap; gap: 10px 16px; font-size: 13px; color: var(--ink-soft); margin: 0 0 8px; }
+    .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--paper-2); }
+
+    table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    th {
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+      background: #faf6ee;
+    }
+
+    tr:last-child td { border-bottom: 0; }
+    tbody tr:nth-child(even) td { background: #fbf8f2; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    code, .mono {
+      font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+      font-size: 0.86em;
+    }
+
+    ol.roadmap { margin: 0; padding: 0; list-style: none; counter-reset: step; }
+
+    ol.roadmap li {
+      counter-increment: step;
+      background: var(--paper-2);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px 14px 12px 58px;
+      margin: 0 0 10px;
+      position: relative;
+    }
+
+    ol.roadmap li::before {
+      content: counter(step);
+      position: absolute;
+      left: 14px;
+      top: 12px;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--ink);
+      color: var(--paper);
+      font-size: 13px;
+      font-weight: 700;
+      display: grid;
+      place-items: center;
+    }
+
+    .prio {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      margin-right: 6px;
+    }
+
+    .prio.p0 { color: var(--danger); }
+    .prio.p1 { color: var(--gold); }
+    .prio.p2 { color: var(--info); }
+    .prio.p3 { color: var(--muted); }
+
+    .caption { color: var(--muted); font-size: 13px; margin-top: 8px; }
+
+    footer {
+      border-top: 1px solid var(--line);
+      padding: 22px 0 40px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 760px) {
+      .stats, .grid-2 { grid-template-columns: 1fr; }
+      .bar-row { grid-template-columns: 1fr; gap: 4px; }
+      .bar-row .pct { text-align: left; }
+      body { font-size: 16px; }
+    }
+
+    @media print {
+      body { background: white; }
+      nav.toc { position: static; background: white; }
+      .card, .stat, ol.roadmap li, .table-wrap { break-inside: avoid; }
+      a { color: inherit; text-decoration: none; }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="wrap">
+      <p class="eyebrow">Costa Rica pay-at-table PWA</p>
+      <h1>Backend readiness review</h1>
+      <p class="lede">
+        Source analysis of routes, GuestContext, localStorage stores, and mock fixtures.
+        The product domain is largely designed. There is no production server, no shared
+        live state across devices, and payments are simulated.
+      </p>
+      <p class="meta">Review date: September 16, 2026 · Exported for sharing: September 23, 2026 · Scores are engineering judgment from code, not runtime metrics.</p>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="Sections">
+    <div class="wrap">
+      <a href="#verdict">Verdict</a>
+      <a href="#overview">How it works</a>
+      <a href="#scores">What 100% means</a>
+      <a href="#gaps">Gaps</a>
+      <a href="#security">Security</a>
+      <a href="#api">Target API</a>
+      <a href="#roadmap">Roadmap</a>
+    </div>
+  </nav>
+
+  <main>
+    <div class="wrap">
+      <section id="verdict">
+        <div class="callout warning">
+          <strong>There is no backend to finalize</strong>
+          The app is a Vite + React 19 frontend. GuestContext is the server.
+          localStorage is the database. One browser tab is the restaurant. To go
+          live, extract that domain into APIs and realtime. Connecting remaining
+          screens does not get there.
+        </div>
+
+        <div class="callout update">
+          <strong>Update since this review (September 23, 2026)</strong>
+          Local work added a Node HTTP API under <span class="mono">/api/v1</span> for staff login, device registry, and KDS actions, stored in a JSON file (<span class="mono">.data/restaurant-api.json</span>). Staff PINs are still compared in plaintext. There is still no Postgres, WebSockets, payment processor, or Hacienda worker. Guest orders, payments, and the floor still live in the browser. The scores and gaps below still describe the product.
+        </div>
+
+        <div class="stats">
+          <div class="stat warn">
+            <div class="value">~40%</div>
+            <div class="label">Production-complete</div>
+          </div>
+          <div class="stat danger">
+            <div class="value">0</div>
+            <div class="label">Production HTTP APIs / WebSockets</div>
+          </div>
+          <div class="stat">
+            <div class="value">10</div>
+            <div class="label">localStorage keys (fake DB)</div>
+          </div>
+          <div class="stat info">
+            <div class="value">1</div>
+            <div class="label">Live floor table (#7)</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="overview">
+        <h2>How the app works today</h2>
+        <p>
+          Four portals share one React tree via GuestProvider in App.tsx: guest
+          PWA, server floor, kitchen/bar KDS + cashier, and admin. Mutations
+          (join table, send to kitchen, pay, void, approve guardian) update
+          in-memory SharedState. Table sessions are written to
+          <span class="mono">cr-pat-table-sessions</span>. Menu, staff, restaurant overlays, and shifts
+          each have their own key. KDS tickets and the guardian queue are not
+          persisted.
+        </p>
+
+        <h3>Product completeness by layer</h3>
+        <p class="caption" style="margin-top:0">Weighted mix used in the overview bar. Domain is ahead of infrastructure. The empty backend segment is intentional: that layer scores 0.</p>
+        <div class="composite" role="img" aria-label="Weighted completeness: domain 32, UI 28, persistence 12, payments 4, backend 0, out of 100">
+          <span class="fill green" style="width:32%"></span>
+          <span class="fill blue" style="width:28%"></span>
+          <span class="fill yellow" style="width:12%"></span>
+          <span class="fill orange" style="width:4%"></span>
+        </div>
+        <p class="legend">
+          <span><i style="background:#166534"></i>Domain 32</span>
+          <span><i style="background:#1d4ed8"></i>UI 28</span>
+          <span><i style="background:#b45309"></i>Persistence 12</span>
+          <span><i style="background:#c2410c"></i>Payments 4</span>
+          <span><i style="background:#b91c1c"></i>Backend 0</span>
+        </p>
+
+        <div class="grid-2">
+          <article class="card">
+            <h3>Domain already designed <span class="pill keep">Keep</span></h3>
+            <ul>
+              <li>Table lifecycle: available → seated → ordering → paying → closed.</li>
+              <li>Cart → send-to-kitchen → kitchen/bar KDS split by category.</li>
+              <li>Guardian (alcohol, price, quantity) with approve/reject and rollback.</li>
+              <li>Split: full / equal / pay-my-items with FIFO settlement maps.</li>
+              <li>Receipt cycles, Costa Rica 10% service + 13% IVA (independent).</li>
+              <li>Staff PIN clock-in, closed-check ledger, shift snapshots.</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>Fake infrastructure <span class="pill replace">Replace</span></h3>
+            <ul>
+              <li>GuestContext (~1,200 lines) is a god-object “backend.”</li>
+              <li>Checkout waits 1.8s then records a payment locally.</li>
+              <li>Admin PIN and staff PIN stored in plaintext localStorage.</li>
+              <li>Three restaurant fixtures exist, but catalogs are not scoped by restaurantId.</li>
+              <li>Hacienda / DGT / BAC gateway fields are UI-only and not saved.</li>
+              <li>PortalSwitcher lets anyone jump guest ↔ kitchen ↔ admin.</li>
+            </ul>
+          </article>
+        </div>
+
+        <h3>localStorage as the current database</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Key</th>
+                <th>Owns</th>
+                <th>Shared across tabs?</th>
+                <th>Backend table</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>cr-pat-table-sessions</code></td>
+                <td>Live table cart, guests, payments</td>
+                <td>Same origin, no live sync</td>
+                <td>table_sessions, orders, payments</td>
+              </tr>
+              <tr>
+                <td><code>cr-pat-guest-session</code></td>
+                <td>QR menu-access token + tableSessionId</td>
+                <td>Per browser</td>
+                <td>guest_devices / session tokens</td>
+              </tr>
+              <tr>
+                <td><code>cr-pat-guest-id / name</code></td>
+                <td>Anonymous diner identity</td>
+                <td>Per browser</td>
+                <td>guests</td>
+              </tr>
+              <tr>
+                <td><code>cr-pat-menu-catalog</code></td>
+                <td>Menu CRUD overlay of menuData</td>
+                <td>Same origin</td>
+                <td>menu_items (per restaurant)</td>
+              </tr>
+              <tr>
+                <td><code>cr-pat-staff-directory</code></td>
+                <td>Staff + 4-digit PINs</td>
+                <td>Same origin</td>
+                <td>staff_accounts (hashed PIN)</td>
+              </tr>
+              <tr>
+                <td><code>cr-pat-staff-shift</code></td>
+                <td>Open clock-in (one at a time)</td>
+                <td>Same origin</td>
+                <td>shifts</td>
+              </tr>
+              <tr>
+                <td><code>cr-pat-shift-ledger / snapshots</code></td>
+                <td>Closed checks + Z-style stats</td>
+                <td>Same origin</td>
+                <td>checks, shift_closes</td>
+              </tr>
+              <tr>
+                <td><code>cr-pat-restaurant-overlays</code></td>
+                <td>Name, tax, brand, SINPE, flags</td>
+                <td>Same origin</td>
+                <td>restaurants, settings</td>
+              </tr>
+              <tr>
+                <td><code>cr-pat-table-catalog</code></td>
+                <td>16 demo tables / sections</td>
+                <td>Same origin</td>
+                <td>tables, sections</td>
+              </tr>
+              <tr>
+                <td><code>cr-pat-admin-session</code></td>
+                <td>Manager login flag</td>
+                <td>Same origin</td>
+                <td>auth sessions / JWT</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Layer scores (frontend logic vs production)</h3>
+        <div class="stack-bars">
+          <div class="bar-row">
+            <div class="name">Domain logic (orders, split, tax, guardian)</div>
+            <div class="track"><div class="fill green" style="width:78%"></div></div>
+            <div class="pct">78%</div>
+          </div>
+          <div class="bar-row">
+            <div class="name">Guest / staff / KDS / admin UI</div>
+            <div class="track"><div class="fill green" style="width:82%"></div></div>
+            <div class="pct">82%</div>
+          </div>
+          <div class="bar-row">
+            <div class="name">Local persistence (localStorage)</div>
+            <div class="track"><div class="fill yellow" style="width:45%"></div></div>
+            <div class="pct">45%</div>
+          </div>
+          <div class="bar-row">
+            <div class="name">Cross-portal wiring in one browser</div>
+            <div class="track"><div class="fill green" style="width:70%"></div></div>
+            <div class="pct">70%</div>
+          </div>
+          <div class="bar-row">
+            <div class="name">Real backend / multi-device</div>
+            <div class="track"><div class="fill zero"></div></div>
+            <div class="pct">0%</div>
+          </div>
+          <div class="bar-row">
+            <div class="name">Live payments + fiscal invoices</div>
+            <div class="track"><div class="fill red" style="width:8%"></div></div>
+            <div class="pct">8%</div>
+          </div>
+        </div>
+        <p class="caption">Scores are engineering judgment from code, not runtime metrics.</p>
+      </section>
+
+      <section id="scores">
+        <h2>Why production-complete is ~40%</h2>
+        <p>
+          That number is not “40% of the screens are done.” It answers: could a
+          restaurant operate this product with real guests, real kitchen screens,
+          and real colones tonight? Domain and UI are high, so the demo is strong.
+          Backend and payments are near zero, and those two layers are what “go live”
+          actually means. Weighting them more heavily lands around 38%, rounded to ~40%.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Layer</th>
+                <th class="num">Now</th>
+                <th class="num">Weight in 40%</th>
+                <th class="num">Contribution</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>Domain logic</td><td class="num">78%</td><td class="num">15%</td><td class="num">11.7</td></tr>
+              <tr><td>Guest / staff / KDS / admin UI</td><td class="num">82%</td><td class="num">15%</td><td class="num">12.3</td></tr>
+              <tr><td>Local persistence</td><td class="num">45%</td><td class="num">10%</td><td class="num">4.5</td></tr>
+              <tr><td>Cross-portal wiring</td><td class="num">70%</td><td class="num">10%</td><td class="num">7.0</td></tr>
+              <tr><td>Real backend / multi-device</td><td class="num">0%</td><td class="num">25%</td><td class="num">0.0</td></tr>
+              <tr><td>Live payments + fiscal invoices</td><td class="num">8%</td><td class="num">25%</td><td class="num">2.0</td></tr>
+              <tr><td><strong>Weighted total</strong></td><td class="num"></td><td class="num"><strong>100%</strong></td><td class="num"><strong>~38% → 40%</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout info">
+          <strong>A simple average would be ~47%</strong>
+          (78 + 82 + 45 + 70 + 0 + 8) / 6 ≈ 47%. The 40% figure discounts that because a
+          polished menu screen cannot take a card or drive a second kitchen iPad.
+          Missing backend and payments are blockers, not equal line items.
+        </div>
+
+        <h3>What 100% means per layer</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Layer</th>
+                <th class="num">Now</th>
+                <th>100% looks like</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Domain logic</td>
+                <td class="num">78%</td>
+                <td>Payment stores tax + tip + tender; SINPE and empresa invoice are first-class; paid-cycle refunds; checkout lock actually blocks other guests; sequential comprobante numbers.</td>
+              </tr>
+              <tr>
+                <td>UI</td>
+                <td class="num">82%</td>
+                <td>All catalog tables on the floor; cashier not hardcoded to #7; feature flags drive checkout; Hacienda form saves; no PortalSwitcher in prod; KDS/caja login; PWA install.</td>
+              </tr>
+              <tr>
+                <td>Persistence</td>
+                <td class="num">45%</td>
+                <td>Every mutation persists (void, cancel, guardian, KDS). KDS + guardian survive refresh. Keys scoped by restaurantId. Two tabs stay in sync via storage events.</td>
+              </tr>
+              <tr>
+                <td>Cross-portal wiring</td>
+                <td class="num">70%</td>
+                <td>One table catalog feeds floor, QR, KDS, caja, admin. Menu/staff/sessions scoped per restaurant. Live reports only — no WEEKLY_SALES filler.</td>
+              </tr>
+              <tr>
+                <td>Backend / multi-device</td>
+                <td class="num">0%</td>
+                <td>Postgres + REST + WebSockets. Guest phone, floor tablet, kitchen, bar, caja, admin all see the same session. Signed QR, hashed PINs, server prices.</td>
+              </tr>
+              <tr>
+                <td>Payments + fiscal</td>
+                <td class="num">8%</td>
+                <td>PSP wallets/cards (no PAN in app), verified SINPE, Hacienda DGT XML v4.4 FE/TE, WhatsApp/email receipts from the existing flags.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="caption">100% on every bar means a restaurant can run service, take money, and issue legal invoices. 100% on domain and UI alone is still a prototype.</p>
+      </section>
+
+      <section id="gaps">
+        <h2>What is connected vs what is not</h2>
+        <p>
+          Guest, server, KDS, cashier, and admin are wired together only while
+          they share one GuestProvider instance. Open kitchen on a second phone
+          and it will not see the order. That is the core production gap.
+        </p>
+
+        <div class="callout danger">
+          <strong>Persistence is incomplete even for the prototype</strong>
+          persistSessions() runs on send-to-kitchen, staff send, reset, and
+          updateSession (join, cart, pay, present bill). It does not run on
+          guest cancel, staff void, cart remove, guardian approve/reject, or
+          KDS advance/bump. Refresh can resurrect voided items. KDS and
+          guardian state always reset on reload.
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Area</th>
+                <th>Status</th>
+                <th>What to change</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Floor vs catalog</td>
+                <td><span class="pill split">Split</span></td>
+                <td>FLOOR_TABLES is only mesa 7. Admin QR seeds 16 MOCK_TABLES. restaurant.tables is unused. Drive floor from table catalog.</td>
+              </tr>
+              <tr>
+                <td>Multi-restaurant</td>
+                <td><span class="pill cosmetic">Cosmetic</span></td>
+                <td>la-terraza / soda-marisol / el-patio-azul exist, but menu, staff, and sessions are global. Scope every row by restaurantId.</td>
+              </tr>
+              <tr>
+                <td>Payments</td>
+                <td><span class="pill simulated">Simulated</span></td>
+                <td>CheckoutModal setTimeout → recordPayment. No PSP, no SINPE capture, no Apple/Google Pay session.</td>
+              </tr>
+              <tr>
+                <td>Tax vs payment amount</td>
+                <td><span class="pill mismatch">Mismatch</span></td>
+                <td>Guest sees IVA + servicio on the total; PaymentRecord stores subtotal + tip only. Persist tax lines on the payment.</td>
+              </tr>
+              <tr>
+                <td>SINPE + empresa invoice</td>
+                <td><span class="pill types">Types only</span></td>
+                <td>PaymentMethod includes sinpe; checkout tenders are apple/google/card. Cédula jurídica is collected and discarded.</td>
+              </tr>
+              <tr>
+                <td>Hacienda DGT XML 4.4</td>
+                <td><span class="pill dead">Dead UI</span></td>
+                <td>SystemSettings gateway + DGT fields never save via saveRestaurantSettings.</td>
+              </tr>
+              <tr>
+                <td>Feature flags</td>
+                <td><span class="pill admin">Admin-only</span></td>
+                <td>biometricPay, emailReceipts, whatsappReceipts are toggled but guest checkout ignores them (only dualCurrency is read).</td>
+              </tr>
+              <tr>
+                <td>Confirmation receipt</td>
+                <td><span class="pill hardcoded">Hardcoded</span></td>
+                <td>ORDER_NUMBER is LT-YYYYMMDD-007. Needs sequential comprobante per restaurant.</td>
+              </tr>
+              <tr>
+                <td>Auth</td>
+                <td><span class="pill client">Client PIN</span></td>
+                <td>KDS and cashier have no login. PortalSwitcher bypasses role gates. Hash PINs server-side; issue JWTs.</td>
+              </tr>
+              <tr>
+                <td>Cashier POS</td>
+                <td><span class="pill hardcoded">Hardcoded #7</span></td>
+                <td>getTableSession("7") for today’s payments. Must iterate live sessions / checks.</td>
+              </tr>
+              <tr>
+                <td>Admin 7-day report</td>
+                <td><span class="pill hybrid">Hybrid mock</span></td>
+                <td>buildAdminReport fills historic days from WEEKLY_SALES, live only for “Hoy”.</td>
+              </tr>
+              <tr>
+                <td>PWA / QR</td>
+                <td><span class="pill prototype">Prototype</span></td>
+                <td>HashRouter, no service worker, QR via api.qrserver.com. Need HTTPS origin, signed table tokens, installable manifest.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="security">
+        <h2>Security blockers before any real restaurant</h2>
+        <div class="grid-2">
+          <article class="card">
+            <h3>Must not ship</h3>
+            <ul>
+              <li>Plaintext 4-digit PINs in localStorage (demo PIN 0000 for manager).</li>
+              <li>Fake BAC API key field labeled sk_live_bac_… in settings.</li>
+              <li>CardDetails type (PAN/CVV) — never collect cards in the PWA.</li>
+              <li>Unauthenticated /kds/* and PortalSwitcher in production builds.</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>Must add on the server</h3>
+            <ul>
+              <li>Signed QR: restaurantId + tableId + rotating nonce, not guessable /m/7.</li>
+              <li>Server-authoritative prices (never trust client unitPrice).</li>
+              <li>Optimistic concurrency on table session version for split pay.</li>
+              <li>PCI via PSP hosted fields / wallets only; SINPE confirmation codes server-side.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section id="api">
+        <h2>Recommended backend shape</h2>
+        <p>
+          Keep the existing TypeScript domain (billing.ts, guardian.ts, kds.ts,
+          tax.ts, order.ts) as shared packages. Replace GuestContext mutations
+          with a thin API client + WebSocket. Do not rewrite the UI first.
+        </p>
+
+        <div class="callout info">
+          <strong>Suggested stack</strong>
+          TypeScript API (Fastify or NestJS) + PostgreSQL + Redis pub/sub +
+          WebSockets. Object storage for menu photos. PSP for Apple/Google/card
+          (BAC / CyberSource or equivalent CR acquirer). Separate worker for
+          Hacienda DGT XML v4.4. One tenant = one restaurant row; never share
+          catalogs across restaurants.
+        </div>
+
+        <h3>Core entities</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Entity</th>
+                <th>Maps from</th>
+                <th>Realtime?</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>Restaurant, Settings, Brand</td><td>restaurants.ts + restaurantConfig</td><td>No</td></tr>
+              <tr><td>Table, Section</td><td>tableCatalog (not FLOOR_TABLES)</td><td>Status yes</td></tr>
+              <tr><td>MenuItem, ModifierGroup</td><td>menuCatalog</td><td>Availability yes</td></tr>
+              <tr><td>StaffAccount, Shift</td><td>staffDirectory + staffSession</td><td>Shift yes</td></tr>
+              <tr><td>TableSession, Guest</td><td>GuestContext TableSession</td><td>Yes</td></tr>
+              <tr><td>Order / CartItem / KdsTicket</td><td>sendToKitchen + kds.ts</td><td>Yes</td></tr>
+              <tr><td>GuardianReview</td><td>guardianQueue</td><td>Yes</td></tr>
+              <tr><td>Payment, TaxLine, Tip</td><td>recordPayment + tax.ts</td><td>Yes</td></tr>
+              <tr><td>ElectronicInvoice (FE/TE)</td><td>CheckoutModal invoiceType (unused)</td><td>Async</td></tr>
+              <tr><td>ClosedCheck, ShiftClose</td><td>shift ledger / snapshots</td><td>No</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Minimum API surface (replace GuestContext)</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Method</th>
+                <th>Purpose</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td><code>POST /guest/sessions/join</code></td><td>QR token → guestId, table session, menu access</td></tr>
+              <tr><td><code>POST /tables/:id/cart</code></td><td>Add/update/remove lines; server prices</td></tr>
+              <tr><td><code>POST /tables/:id/send</code></td><td>Create order, guardian or KDS tickets</td></tr>
+              <tr><td><code>POST /orders/:id/cancel-item</code></td><td>Undo window + kitchen-not-started</td></tr>
+              <tr><td><code>POST /guardian/:id/approve|reject</code></td><td>Staff; reject rolls back sent lines</td></tr>
+              <tr><td><code>POST /kds/:ticketId/advance</code></td><td>pending → preparing → ready → delivered</td></tr>
+              <tr><td><code>POST /tables/:id/split-lock</code></td><td>Authoritative remaining + lock TTL</td></tr>
+              <tr><td><code>POST /payments/intents</code></td><td>Create PSP/SINPE intent; webhook completes recordPayment</td></tr>
+              <tr><td><code>POST /staff/clock-in|out</code></td><td>PIN verify server-side; one open shift policy</td></tr>
+              <tr><td><code>POST /tables/:id/present-bill|clear</code></td><td>staffPresentBill / staffClearTable rules</td></tr>
+              <tr><td><code>CRUD /admin/menu|/staff|/tables|/settings</code></td><td>Replace local overlays</td></tr>
+              <tr><td><code>GET /admin/reports</code></td><td>Replace adminReports + kill WEEKLY_SALES</td></tr>
+              <tr><td><code>WS /ops</code></td><td>table.updated, kds.ticket, guardian.queued, payment.captured</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Frontend extraction (do this before writing routes)</h3>
+        <p>
+          Introduce a TableOps interface with the same methods GuestContext
+          already exposes (joinTable, sendToKitchen, recordPayment, …). Today
+          implement it with the current React state. Tomorrow swap in HTTP+WS
+          without rewriting MenuScreen or FloorPlan.
+        </p>
+      </section>
+
+      <section id="roadmap">
+        <h2>Path to 100% complete</h2>
+        <p>
+          Do not treat “add a backend” as one task. Ship in this order so the
+          restaurant can run table 7 for real, then scale to the 16-table floor.
+        </p>
+
+        <ol class="roadmap">
+          <li><span class="prio p0">P0</span> Extract TableOps from GuestContext; persist every mutation; storage event or BroadcastChannel so two tabs stay in sync (proves the contract).</li>
+          <li><span class="prio p0">P0</span> One table source of truth: catalog drives floor + QR + cashier. Remove FLOOR_TABLES vs MOCK_TABLES split. Scope menu/staff/sessions by restaurantId.</li>
+          <li><span class="prio p0">P0</span> Real auth: hashed staff PINs, manager JWT, no PortalSwitcher in prod, KDS/cashier require a station session.</li>
+          <li><span class="prio p0">P0</span> Signed QR tokens + BrowserRouter on HTTPS. Guest cannot guess another table. Bind menu access to sessionId server-side.</li>
+          <li><span class="prio p1">P1</span> Postgres + REST for sessions/orders/KDS/guardian. WebSocket fan-out to guest phones, floor tablet, kitchen, bar, caja.</li>
+          <li><span class="prio p1">P1</span> Payment intents: wallets + card via PSP (never PAN in app). SINPE Móvil as a first-class tender with reference verification. Store tax lines + tip + comprobante number.</li>
+          <li><span class="prio p1">P1</span> Hacienda DGT XML v4.4 worker (FE/TE, cédula jurídica). Persist settings for real; send WhatsApp/email receipts from flags.</li>
+          <li><span class="prio p2">P2</span> Full floor (all catalog tables), Z-report from ledger not table 7, live-only analytics, 86’ing items, image CDN.</li>
+          <li><span class="prio p2">P2</span> Real PWA: web app manifest, service worker for menu shell, offline “reconnect” banner, printer/cash drawer at caja.</li>
+          <li><span class="prio p3">P3</span> True multi-tenant (many restaurants), station pairing codes, audit log, refunds/voids on paid cycles, load tests for concurrent split pay.</li>
+        </ol>
+
+        <h3>What not to do</h3>
+        <div class="grid-2">
+          <article class="card">
+            <h3>Keep GuestContext as the contract</h3>
+            <ul>
+              <li>Do not bolt a generic CRUD backend onto the current screens without extracting TableOps. GuestContext will stay the source of truth and the API will drift.</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>Stay out of PCI scope</h3>
+            <ul>
+              <li>Do not collect card numbers in CheckoutModal to “finish payments.” That would make the app PCI-scope overnight.</li>
+              <li>Do not keep HashRouter + public /m/:tableId once real money moves. Table IDs are currently guessable.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      Source: local codebase review · September 16, 2026 · frontend-only prototype, with a September 23 note on the staff/device/KDS JSON API that started afterward.
+      Open this file in any browser. No server required.
+    </div>
+  </footer>
+</body>
+</html>
