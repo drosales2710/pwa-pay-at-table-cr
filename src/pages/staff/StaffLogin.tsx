@@ -5,7 +5,7 @@ import { ApiError, isApiAvailable } from "../../api/client"
 import { loginWithApi, validateServerSession } from "../../api/auth"
 import { loginWithLocalFallback } from "../../api/localAuthFallback"
 import { useGuest } from "../../context/GuestContext"
-import { resolvePostLoginPath } from "../../utils/staffAccess"
+import { canRoleAccessPath, resolvePostLoginPath } from "../../utils/staffAccess"
 import type { StaffRole } from "../../utils/staffDirectory"
 import { getAdminSession } from "../../utils/adminSession"
 import { getStaffPortalSession } from "../../utils/staffPortalSession"
@@ -24,6 +24,7 @@ export default function StaffLogin() {
   const [loading, setLoading] = useState(false)
   const [checkingSession, setCheckingSession] = useState(true)
   const [session, setSession] = useState(getServerAuthSession())
+  const [needsManagerPin, setNeedsManagerPin] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -33,18 +34,31 @@ export default function StaffLogin() {
 
       if (validated) {
         setSession(validated)
+        if (!returnTo || canRoleAccessPath(validated.staff.role, returnTo)) {
+          navigate(resolvePostLoginPath(validated.staff.role, returnTo), { replace: true })
+          return
+        }
+        setNeedsManagerPin(returnTo.startsWith("/admin"))
         setCheckingSession(false)
-        navigate(resolvePostLoginPath(validated.staff.role, returnTo), { replace: true })
         return
       }
 
       const portal = getStaffPortalSession()
       const shift = getOpenStaffShift()
       const admin = getAdminSession()
-      const localRole = shift?.role ?? portal?.role ?? (admin ? "manager" : null)
-      if (localRole) {
-        navigate(resolvePostLoginPath(localRole, returnTo), { replace: true })
+
+      if (returnTo?.startsWith("/admin") && admin) {
+        navigate(returnTo, { replace: true })
+        return
       }
+
+      const localRole = shift?.role ?? portal?.role ?? (admin ? "manager" : null)
+      if (localRole && (!returnTo || canRoleAccessPath(localRole, returnTo))) {
+        navigate(resolvePostLoginPath(localRole, returnTo), { replace: true })
+        return
+      }
+
+      setNeedsManagerPin(Boolean(returnTo?.startsWith("/admin") && localRole))
       setCheckingSession(false)
     })()
     return () => {
@@ -60,7 +74,7 @@ export default function StaffLogin() {
     )
   }
 
-  if (session) {
+  if (session && (!returnTo || canRoleAccessPath(session.staff.role, returnTo))) {
     return <Navigate to={resolvePostLoginPath(session.staff.role, returnTo)} replace />
   }
 
@@ -154,9 +168,19 @@ export default function StaffLogin() {
 
         <div className="flex-1 px-5 py-8">
           <p className="text-caption text-muted-foreground mb-6 text-center">
-            Ingresa tu PIN personal. La sesión se valida en el servidor.
-            <br />
-            Enter your PIN. Session is validated on the server.
+            {needsManagerPin ? (
+              <>
+                Esta sesión no puede abrir Admin. Ingresá el PIN de gerencia.
+                <br />
+                This session can&apos;t open Admin. Enter the manager PIN.
+              </>
+            ) : (
+              <>
+                Ingresa tu PIN personal. La sesión se valida en el servidor.
+                <br />
+                Enter your PIN. Session is validated on the server.
+              </>
+            )}
           </p>
 
           <div className="mb-6">
