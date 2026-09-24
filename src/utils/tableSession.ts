@@ -59,27 +59,37 @@ export interface GuestMenuAccess {
 
 const MENU_ACCESS_KEY = "cr-pat-guest-session"
 
+/** In-memory fallback when localStorage is blocked (e.g. strict private mode). */
+let memoryMenuAccess: GuestMenuAccess | null = null
+
 export function loadGuestMenuAccess(): GuestMenuAccess | null {
   try {
     const raw = localStorage.getItem(MENU_ACCESS_KEY)
-    if (!raw) return null
-    return JSON.parse(raw) as GuestMenuAccess
+    if (raw) {
+      memoryMenuAccess = JSON.parse(raw) as GuestMenuAccess
+      return memoryMenuAccess
+    }
   } catch {
-    return null
+    // ignore — fall back to memory
   }
+  return memoryMenuAccess
 }
 
 export function saveGuestMenuAccess(access: GuestMenuAccess) {
+  memoryMenuAccess = access
   try {
     localStorage.setItem(MENU_ACCESS_KEY, JSON.stringify(access))
   } catch {
-    // ignore
+    // ignore — memoryMenuAccess still holds the grant for this tab
   }
 }
 
 export function revokeGuestMenuAccess() {
   const current = loadGuestMenuAccess()
-  if (!current) return
+  if (!current) {
+    memoryMenuAccess = null
+    return
+  }
   saveGuestMenuAccess({ ...current, menuAccess: false })
 }
 

@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useMemo, useCallback } from "react"
+import { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { Outlet, useParams, useSearchParams } from "react-router-dom"
 import type {
   CartItem,
@@ -217,6 +217,7 @@ interface GuestContextType {
   sessionClosed: boolean
   menuAccessGranted: boolean
   grantMenuAccess: () => void
+  enterTableAsGuest: (displayName?: string) => void
   resetTableForNewParty: () => void
   guests: TableGuest[]
   payments: PaymentRecord[]
@@ -256,6 +257,7 @@ interface GuestContextType {
   kdsTickets: KDSTicket[]
   advanceKdsTicket: (ticketId: string) => void
   bumpKdsTicket: (ticketId: string) => void
+  recallKdsTicket: (ticketId: string) => void
 
   staffSendToKitchen: (
     tableId: string,
@@ -315,7 +317,15 @@ export function GuestProvider() {
     kdsTickets: [],
   }))
 
-  const currentSession = shared.sessions[resolvedTableId] ?? emptySession(resolvedTableId)
+  const placeholderSessions = useRef<Record<string, TableSession>>({})
+  const getPlaceholderSession = useCallback((tableId: string) => {
+    if (!placeholderSessions.current[tableId]) {
+      placeholderSessions.current[tableId] = emptySession(tableId)
+    }
+    return placeholderSessions.current[tableId]
+  }, [])
+
+  const currentSession = shared.sessions[resolvedTableId] ?? getPlaceholderSession(resolvedTableId)
   const lifecycle = deriveLifecycle(currentSession)
   const guestRecord = currentSession.guests.find((g) => g.guestId === guestId)
   const guestIndex = guestRecord?.index ?? 0
@@ -332,13 +342,24 @@ export function GuestProvider() {
   const [menuAccessTick, setMenuAccessTick] = useState(0)
 
   useEffect(() => {
-    saveGuestMenuAccess({
-      restaurantId: restaurant.id,
-      tableId: resolvedTableId,
-      tableSessionId: currentSession.sessionId,
-      menuAccess: loadGuestMenuAccess()?.menuAccess ?? false,
-    })
-  }, [restaurant.id, resolvedTableId, currentSession.sessionId])
+    const stored = shared.sessions[resolvedTableId]
+    if (!stored) return
+
+    const access = loadGuestMenuAccess()
+    if (
+      access?.menuAccess &&
+      access.restaurantId === restaurant.id &&
+      access.tableId === resolvedTableId &&
+      access.tableSessionId === stored.sessionId
+    ) {
+      return
+    }
+    // Session rotated — drop stale menu token; guest must scan QR again.
+    if (access?.tableSessionId && access.tableSessionId !== stored.sessionId) {
+      revokeGuestMenuAccess()
+      setMenuAccessTick((n) => n + 1)
+    }
+  }, [restaurant.id, resolvedTableId, shared.sessions[resolvedTableId]?.sessionId])
 
   useEffect(() => {
     applyRestaurantBrand(restaurant.brand)
@@ -472,17 +493,69 @@ export function GuestProvider() {
 
   const grantMenuAccess = useCallback(() => {
     setShared((prev) => {
-      const session = prev.sessions[resolvedTableId] ?? emptySession(resolvedTableId)
+      const existing = prev.sessions[resolvedTableId]
+      const session = existing ?? emptySession(resolvedTableId)
       saveGuestMenuAccess({
         restaurantId: restaurant.id,
         tableId: resolvedTableId,
         tableSessionId: session.sessionId,
         menuAccess: true,
       })
-      return prev
+      if (existing) return prev
+      const nextSessions = { ...prev.sessions, [resolvedTableId]: session }
+      persistSessions(nextSessions)
+      return { ...prev, sessions: nextSessions }
     })
     setMenuAccessTick((n) => n + 1)
   }, [restaurant.id, resolvedTableId])
+
+  const enterTableAsGuest = useCallback(
+    (displayName?: string) => {
+      const name = displayName?.trim() || guestName || null
+      if (name) {
+        persistGuestName(name)
+        setGuestNameState(name)
+      }
+
+      setShared((prev) => {
+        const base = prev.sessions[resolvedTableId] ?? emptySession(resolvedTableId)
+        const stamped = stampSessionWithOpenShift(base)
+        const exists = stamped.guests.some((g) => g.guestId === guestId)
+        const withGuest = exists
+          ? {
+              ...stamped,
+              guests: stamped.guests.map((g) =>
+                g.guestId === guestId && name ? { ...g, displayName: name } : g
+              ),
+            }
+          : {
+              ...stamped,
+              guests: [
+                ...stamped.guests,
+                {
+                  guestId,
+                  displayName: name || `Comensal ${stamped.guests.length + 1}`,
+                  joinedAt: new Date().toISOString(),
+                  index: stamped.guests.length,
+                },
+              ],
+              lifecycle: stamped.lifecycle === "available" ? ("seated" as const) : stamped.lifecycle,
+            }
+        const updated = withLifecycle(withGuest)
+        const nextSessions = { ...prev.sessions, [resolvedTableId]: updated }
+        persistSessions(nextSessions)
+        saveGuestMenuAccess({
+          restaurantId: restaurant.id,
+          tableId: resolvedTableId,
+          tableSessionId: updated.sessionId,
+          menuAccess: true,
+        })
+        return { ...prev, sessions: nextSessions }
+      })
+      setMenuAccessTick((n) => n + 1)
+    },
+    [guestId, guestName, restaurant.id, resolvedTableId]
+  )
 
   const joinTable = useCallback(
     (displayName?: string) => {
@@ -991,6 +1064,23 @@ export function GuestProvider() {
     }))
   }
 
+  const recallKdsTicket = (ticketId: string) => {
+    setShared((prev) => ({
+      ...prev,
+      kdsTickets: prev.kdsTickets.map((t) => {
+        if (t.id !== ticketId) return t
+        const back: Partial<Record<KDSStatus, KDSStatus>> = {
+          delivered: "ready",
+          ready: "preparing",
+          preparing: "pending",
+        }
+        const previous = back[t.status]
+        if (!previous) return t
+        return { ...t, status: previous }
+      }),
+    }))
+  }
+
   const lockSplitForCheckout = (
     method: SplitMethod,
     guestCount: number,
@@ -1170,6 +1260,7 @@ export function GuestProvider() {
         sessionClosed,
         menuAccessGranted,
         grantMenuAccess,
+        enterTableAsGuest,
         resetTableForNewParty,
         guests: currentSession.guests,
         payments: currentSession.payments,
@@ -1202,6 +1293,7 @@ export function GuestProvider() {
         kdsTickets: shared.kdsTickets,
         advanceKdsTicket,
         bumpKdsTicket,
+        recallKdsTicket,
         staffSendToKitchen,
         staffVoidItem,
         staffRemoveCartItem,
